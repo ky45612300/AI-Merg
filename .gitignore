@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.runtime/
+.env
+*.tmp
+.DS_Store
+Thumbs.db
+
+# 实际配置文件（含 API Key），不提交
+api_config.json
+security_config.json
+
+# 数据库文件
+token_stats.db
+token_stats.db-journal
+chat_logs.db
+chat_logs.db-journal
+
+# 临时脚本
+test_suite.py
