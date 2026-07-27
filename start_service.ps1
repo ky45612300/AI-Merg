@@ -7,7 +7,7 @@ $PidFile = Join-Path $Root "api-pool.pid"
 $LogDir  = Join-Path $Root "logs"
 $OutLog  = Join-Path $LogDir "api-pool.out.log"
 $ErrLog  = Join-Path $LogDir "api-pool.err.log"
-$Port    = if ($env:PORT) { $env:PORT } else { "5100" }
+$Port    = if ($env:PORT) { $env:PORT } else { "5200" }
 
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
 

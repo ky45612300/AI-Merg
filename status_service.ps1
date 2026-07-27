@@ -4,7 +4,7 @@
 $ErrorActionPreference = "SilentlyContinue"
 $Root    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PidFile = Join-Path $Root "api-pool.pid"
-$Port    = if ($env:PORT) { $env:PORT } else { "5100" }
+$Port    = if ($env:PORT) { $env:PORT } else { "5200" }
 
 $running = $false
 

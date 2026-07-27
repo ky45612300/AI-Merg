@@ -61,11 +61,11 @@ python api_pool_server.py
 
 ### 3. 访问面板
 打开浏览器，访问图形化控制台：
-👉 **[http://localhost:5100](http://localhost:5100)**
+👉 **[http://localhost:5200](http://localhost:5200)**
 
 首次启动会在终端输出管理员账号、临时密码和客户端 API Key。登录后可在 **安全设置** 中修改管理员账号/密码，也可以手动设置或重新生成客户端 API Key。
 
-*(默认对外 API 接口 Base URL 为 `http://localhost:5100/v1`，客户端需使用 `Authorization: Bearer <你的 API Key>` 访问)*
+*(默认对外 API 接口 Base URL 为 `http://localhost:5200/v1`，客户端需使用 `Authorization: Bearer <你的 API Key>` 访问)*
 
 ---
 

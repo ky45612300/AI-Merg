@@ -1,15 +1,74 @@
 
   ⚡ API Pool 管理面板已启动
-  🌐 管理面板访问: http://localhost:5100
-  🔗 客户端 Base URL: http://localhost:5100/v1
-  📋 已加载 47 个端点
+  🌐 管理面板访问: http://localhost:5200
+  🔗 客户端 Base URL: http://localhost:5200/v1
+  📋 已加载 56 个端点
   🩺 健康检测: 启动时自动检测 + 每 600秒 复检
 
-[15:30:42] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:30:42] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:30:42] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:30:42] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:30:43] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+[12:29:51] [INFO] 健康检测完成: 检测了 42 个端点（15 个中转站）
+[12:30:49] [INFO] 获取模型成功: https://fuhuagoogle.top/v1 (91 个)
+[12:31:18] [INFO] 获取模型成功: https://fuhuagoogle.top/v1 (91 个)
+[12:32:16] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Claude-Opus-4.6)
+[12:32:20] [ERROR] 端点 '浮华云' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[12:32:26] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 5 分钟后
+[12:32:31] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
+[12:32:33] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Service temporarily unavailable","type":"api_error","param":"","code":null}}
+[12:32:36] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
+[12:32:36] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
+[12:32:36] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
+[12:32:38] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
+[12:32:38] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[12:32:40] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[12:32:42] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: grok-4.5)
+[12:32:43] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[12:32:43] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
+[12:32:43] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[12:32:45] [ERROR] 端点 'luc' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"server_error","param":"","code":null}}
+[12:32:47] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
+[12:32:47] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
+[12:32:47] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[12:32:47] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
+[12:33:08] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
+[12:33:08] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
+[12:33:20] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
+[12:33:20] [INFO] 重试请求，尝试端点 '公益' (模型: grok-4.5)
+[12:33:20] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
+[12:33:20] [INFO] 重试请求，尝试端点 '公益' (模型: grok-4.5)
+[12:33:21] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
+[12:33:22] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
+[12:33:23] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:24] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
+[12:33:24] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[12:33:25] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:25] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
+[12:33:26] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[12:33:27] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
+[12:33:27] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
+[12:33:28] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
+[12:33:28] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
+[12:33:28] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
+[12:33:29] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
+[12:33:31] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:31] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[12:33:32] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:32] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[12:33:33] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[12:33:34] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[12:33:36] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:36] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[12:33:37] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:37] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[12:33:37] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[12:33:39] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[12:33:41] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[12:33:41] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
+[12:33:42] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270433420292199458268d9d6MgQaj7MI)","type":"new_api_error"}}
+[12:33:42] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[12:33:42] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
+[12:33:43] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270433434878516748268d9d69lzhaq8h)","type":"new_api_error"}}
+[12:33:45] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
+[12:33:45] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
+[12:33:46] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
 <head><title>404 Not Found</title></head>
 <body>
 <center><h1>404 Not Found</h1></center>
@@ -17,16 +76,9 @@
 </body>
 </html>
 <!-- a padding to disable MSIE and Chrome friendly err
-[15:30:47] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:30:47] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:30:49] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:30:52] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:30:52] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:30:53] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:30:53] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:30:54] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:30:54] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:30:54] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+[12:33:46] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
+[12:33:46] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
+[12:33:47] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
 <head><title>404 Not Found</title></head>
 <body>
 <center><h1>404 Not Found</h1></center>
@@ -34,16 +86,196 @@
 </body>
 </html>
 <!-- a padding to disable MSIE and Chrome friendly err
-[15:30:56] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:30:56] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:30:57] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:31:01] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:31:01] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search'][15:31:01] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
+[12:33:48] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:48] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
+[12:33:50] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[12:33:50] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Service temporarily unavailable","type":"api_error","param":"","code":null}}
+[12:33:54] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
+[12:33:54] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
+[12:33:54] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
+[12:33:56] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
+[12:33:56] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
+[12:33:57] [ERROR] 端点 'luc' 请求失败: HTTP 503: {"error":{"message":"No eligible accounts available. All accounts may be in cooldown or disabled.","type":"server_error","param":"","code":null}}
+[12:34:00] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
+[12:36:55] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[12:37:14] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: glm-4.5-flash)
+[12:37:16] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
+[12:39:47] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[12:51:03] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[13:02:22] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[13:13:46] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[13:26:40] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[13:36:43] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
+[13:36:44] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
+[13:36:50] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 30 分钟
+[13:36:50] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
+[13:36:53] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 30 分钟
+[13:36:53] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
+[13:36:54] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[13:36:57] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
+[13:36:59] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[13:37:03] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
+[13:37:07] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟
+[13:37:08] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:08] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
+[13:37:10] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:11] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:13] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟
+[13:37:14] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[13:37:14] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:14] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
+[13:37:15] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:16] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
+[13:37:18] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:18] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: grok-4.5)
+[13:37:18] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:20] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[13:37:20] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[13:37:21] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
+[13:37:23] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
+[13:37:24] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
+[13:37:24] [INFO] 重试请求，尝试端点 '公益' (模型: grok-4.5)
+[13:37:26] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
+[13:37:29] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
+[13:37:29] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
+[13:37:35] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
+[13:37:37] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
+[13:37:37] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
+[13:37:39] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[13:37:41] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
+[13:37:41] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
+[13:37:48] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Upstream request failed","type":"upstream_error","param":"","code":null}}
+[13:37:53] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
+[13:37:53] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
+[13:37:53] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
+[13:37:54] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
+[13:37:54] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[13:37:57] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[13:38:00] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[13:38:00] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
+[13:38:01] [ERROR] 端点 'luc' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270538015029072368268d9d6mAmUKbiG)","type":"new_api_error"}}
+[13:38:05] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
+[13:38:05] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
+[13:38:26] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
+[13:38:32] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[13:38:38] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
+[13:38:38] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[13:39:04] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[13:39:08] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[13:39:08] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
+[13:39:10] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270539098698649548268d9d6hj5SndSj)","type":"new_api_error"}}
+[13:39:12] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
+[13:39:12] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
+[13:39:14] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+<!-- a padding to disable MSIE and Chrome friendly err
+[13:39:17] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[13:39:17] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
+[13:39:17] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: glm-4.7-flash)
+[13:39:37] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
+[13:39:38] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
+[13:39:38] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: glm-4.7-flash)
+[13:39:42] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
+[13:41:23] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
+[13:41:23] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Kimi-K3)
+[13:44:13] [ERROR] 端点 '浮华云' 请求失败: 连接/超时错误: The read operation timed out
+[13:44:18] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[13:44:18] [INFO] 重试请求，尝试端点 '浮华云' (模型: Kimi-K3)
+[13:44:22] [ERROR] 端点 '浮华云' 请求失败: HTTP 404: {"error":{"message":"No active credentials for provider: qoder","type":"invalid_request_error","param":"","code":"model_not_found"}}
+[13:44:24] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
+[13:44:25] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
+[13:44:25] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Kimi-K3)
+[13:44:28] [ERROR] 端点 '浮华云' 请求失败: HTTP 404: {"error":{"message":"No active credentials for provider: qoder","type":"invalid_request_error","param":"","code":"model_not_found"}}
+[13:44:40] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
+[13:44:40] [INFO] 重试请求，尝试端点 '浮华云' (模型: Kimi-K3)
+[13:45:15] [ERROR] 端点 '浮华云' 请求失败: HTTP 404: {"error":{"message":"No active credentials for provider: qoder","type":"invalid_request_error","param":"","code":"model_not_found"}}
+[13:45:29] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[13:45:30] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
+[13:45:30] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Kimi-K3)
+[13:46:00] [ERROR] 端点 '浮华云' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[13:46:06] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[13:46:06] [INFO] 重试请求，尝试端点 '浮华云' (模型: Kimi-K3)
+[13:46:18] [ERROR] 端点 '浮华云' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[13:46:24] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
+[13:50:55] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[14:03:01] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[14:13:32] [INFO] 中转站 'fuhuagoogle.top': 测活已暂停
+[14:13:33] [INFO] 中转站 'fuhuagoogle.top': 测活已恢复
+[14:13:51] [INFO] 中转站 'muyuan.do': 已更新 4 个端点的配置 (cooldown_minutes)
+[14:14:21] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[14:14:25] [INFO] 中转站 'newapi.kuaileshifu.com': 已更新 1 个端点的配置 (cooldown_minutes)
+[14:25:41] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[14:31:14] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
+[14:31:19] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
+[14:31:23] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 15 分钟
+[14:31:23] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
+[14:31:25] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 15 分钟
+[14:31:25] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
+[14:31:35] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[14:31:36] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[14:31:39] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
+[14:31:39] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
+[14:31:49] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟[14:31:49] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟
 
-[15:31:01] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:31:02] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:31:02] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:31:02] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+[14:31:52] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
+[14:31:52] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
+[14:31:55] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
+[14:31:56] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
+[14:31:56] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
+[14:31:58] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
+[14:32:07] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[14:32:19] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[14:32:19] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
+[14:32:21] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
+[14:32:21] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[14:32:23] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
+[14:32:24] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
+[14:32:25] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
+[14:32:27] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
+[14:32:33] [INFO] 获取模型成功: https://www.0809.one/v1 (30 个)
+[14:32:33] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
+[14:32:34] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
+[14:32:35] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
+[14:32:35] [INFO] 收到 API 请求，尝试请求端点 '公益' (模型: grok-4.5)
+[14:32:37] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
+[14:32:39] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
+[14:32:39] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
+[14:32:45] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Upstream request failed","type":"upstream_error","param":"","code":null}}
+[14:32:53] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 15 分钟后
+[14:32:53] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
+[14:32:55] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
+[14:32:59] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
+[14:32:59] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[14:33:02] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[14:33:06] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
+[14:33:06] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
+[14:33:06] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[14:33:08] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
+[14:33:08] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
+[14:33:08] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
+[14:33:10] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
+[14:33:10] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[14:33:12] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[14:33:16] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[14:33:16] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
+[14:33:19] [ERROR] 端点 'luc' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270633188794088038268d9d6lnzUXEi6)","type":"new_api_error"}}
+[14:33:23] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
+[14:33:23] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
+[14:33:44] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
+[14:33:56] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
+[14:33:56] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
+[14:35:12] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
+[14:35:21] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[14:35:21] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
+[14:35:22] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270635225292607538268d9d6h9cesZUM)","type":"new_api_error"}}
+[14:35:25] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
+[14:35:25] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
+[14:35:27] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
 <head><title>404 Not Found</title></head>
 <body>
 <center><h1>404 Not Found</h1></center>
@@ -51,869 +283,5 @@
 </body>
 </html>
 <!-- a padding to disable MSIE and Chrome friendly err
-[15:31:04] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:31:04] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:31:06] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:31:08] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:31:09] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:31:09] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:31:09] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:31:10] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:31:12] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:31:12] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:31:14] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:31:14] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:31:14] [INFO] 收到 API 请求，尝试请求端点 '田文镜' (模型: grok-4.5)
-[15:31:16] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:31:17] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)>
-[15:31:18] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:31:18] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:31:18] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:31:20] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
-[15:31:20] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
-[15:31:20] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:31:20] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:31:22] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:31:25] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:31:27] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:31:27] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:31:28] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:31:29] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:31:30] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:31:30] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:31:33] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:31:36] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:31:40] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:31:40] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:31:40] [INFO] 健康检测完成: 检测了 29 个端点（12 个中转站）
-[15:31:40] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:31:42] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:31:42] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:31:44] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:31:46] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:31:47] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:31:47] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:31:47] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:31:49] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:31:49] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:31:51] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:31:54] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:31:54] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:31:54] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:31:55] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:31:57] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:31:57] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:31:59] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:32:02] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:32:03] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:32:03] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:32:04] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:32:06] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:32:06] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:32:11] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:32:14] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:32:16] [WARN] Responses 请求中 3 个工具类型不受支持已忽略: ['namespace', 'tool_search', 'web_search']
-[15:32:16] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:32:16] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:32:18] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:32:18] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:32:21] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:32:23] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:36:20] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:36:20] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:36:29] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:36:30] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:36:31] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:36:45] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:36:47] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:36:47] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:37:01] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:37:02] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:37:02] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:37:16] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:37:26] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:37:26] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:38:27] [ERROR] 端点 '快乐' 请求失败: 连接/超时错误: The read operation timed out
-[15:38:31] [INFO] 端点 '快乐' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:38:31] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:38:53] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:38:56] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:38:56] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:39:07] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:39:18] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:39:18] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:39:26] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:39:27] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:39:27] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:39:36] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:39:46] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:39:46] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:39:55] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[15:39:55] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[15:39:56] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[15:39:57] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:39:57] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[15:39:59] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[15:40:01] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:01] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:01] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:01] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:03] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[15:40:06] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:40:07] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:07] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:18] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:40:18] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:40:21] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:21] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:21] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:21] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:29] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:40:33] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:40:41] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:41] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:43] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:43] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:51] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:40:52] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:52] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:40:55] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:40:57] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:40:57] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:41:05] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:41:06] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:41:06] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:41:10] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:41:10] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:41:10] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:41:15] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:41:16] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:41:16] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:41:19] [INFO] 健康检测完成: 检测了 29 个端点（12 个中转站）
-[15:41:21] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:41:21] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:41:21] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:41:28] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:41:29] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:41:29] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:41:53] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:41:53] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:41:54] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:41:54] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:06] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:06] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:14] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:42:14] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:14] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:20] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:42:20] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:20] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:25] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:42:26] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:42:27] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:27] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:27] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:27] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:39] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:42:47] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:47] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:54] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:54] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:42:55] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:42:57] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:42:57] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:00] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:00] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:00] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:08] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:09] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:09] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:16] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:16] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:16] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:22] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:23] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:24] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:24] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:25] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:25] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:30] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:31] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:31] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:33] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:33] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:33] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:38] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:40] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:40] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:40] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:47] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:47] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:43:48] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:48] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:48] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:48] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:48] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:43:48] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:43:58] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:44:02] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:44:04] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:44:04] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:44:09] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:44:09] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:44:19] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:44:19] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:44:19] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:44:23] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:44:24] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:44:24] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:44:33] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:44:34] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:44:34] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:44:48] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:44:49] [ERROR] 端点 '快乐' 请求失败: 连接/超时错误: The read operation timed out
-[15:44:50] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:44:50] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:44:50] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:44:54] [INFO] 端点 '快乐' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:44:54] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:01] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:45:01] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:06] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:45:10] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:45:10] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:17] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:45:18] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:45:19] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:45:19] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:19] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:45:19] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:22] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:45:24] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:45:24] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:28] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:45:38] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:45:38] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:42] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:45:44] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:45:44] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:45:49] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:46:04] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:04] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:46:09] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:46:10] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:10] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:46:12] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:46:12] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:12] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:46:17] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:46:19] [ERROR] 端点 '快乐' 请求失败: 连接/超时错误: The read operation timed out
-[15:46:21] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
-[15:46:21] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
-[15:46:27] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:27] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:46:34] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:46:34] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:34] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:46:40] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:46:46] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:46] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:46:50] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:46:52] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:52] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:46:56] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:46:57] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:46:57] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:46:57] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:46:58] [ERROR] 端点 '快乐' 请求失败: HTTP 502: <html>
-<head><title>502 Bad Gateway</title></head>
-<body>
-<center><h1>502 Bad Gateway</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly
-[15:47:04] [INFO] 端点 '快乐' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:47:04] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:47:08] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:47:09] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:47:09] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:47:11] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:47:12] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:47:12] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:47:38] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:47:39] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:47:39] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
-[15:47:39] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[15:47:52] [INFO] 端点 '快乐' 请求成功 (延迟: 正常)
-[15:47:59] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:48:00] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:48:00] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:48:07] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:48:07] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:48:31] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:48:33] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:48:33] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:48:34] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:49:01] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:49:01] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:49:06] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:49:08] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:49:08] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:49:16] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:49:18] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:49:18] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:49:30] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:49:30] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:49:30] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:49:41] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:49:42] [INFO] 端点 'luc' 请求成功 (延迟: 正常)
-[15:49:43] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:49:43] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:51:13] [ERROR] 端点 'luc' 请求失败: 连接/超时错误: The read operation timed out
-[15:51:18] [INFO] 端点 'luc' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:51:18] [INFO] 收到 API 请求，尝试请求端点 'luc' (模型: grok-4.5)
-[15:52:12] [INFO] 健康检测完成: 检测了 29 个端点（12 个中转站）
-[15:52:48] [ERROR] 端点 'luc' 请求失败: 连接/超时错误: The read operation timed out
-[15:52:52] [WARN] 端点 'luc' 连续 2 次瞬态故障超限，进入冷却
-[15:52:52] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
-[15:52:52] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
-[15:53:32] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:53:32] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:53:33] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:53:34] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:53:35] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:53:37] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:53:39] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:53:40] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:53:40] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:53:41] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:53:42] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:53:42] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:53:44] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:53:47] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:53:47] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:53:47] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:53:48] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:53:50] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:53:50] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:53:52] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:53:53] [ERROR] 端点 '快乐' 请求失败: 连接/超时错误: The read operation timed out
-[15:53:54] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:53:55] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:53:55] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:53:56] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:53:58] [INFO] 端点 '快乐' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:53:58] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
-[15:53:58] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:53:58] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:53:59] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:02] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:54:04] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:54:04] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:54:05] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:54:07] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:54:07] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:54:08] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:11] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:54:11] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:54:11] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:54:12] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:54:14] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:54:14] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:54:15] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:18] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:54:19] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:54:19] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:54:20] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:54:22] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:54:22] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:54:23] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:26] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:54:26] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:54:26] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:54:27] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:54:29] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:54:29] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:54:30] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:33] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:54:34] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:54:34] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:54:34] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:54:36] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:54:36] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:54:38] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:40] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:54:42] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:54:42] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:54:43] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:54:46] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:54:46] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:54:48] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:50] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:54:52] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:54:52] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:54:53] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:54:55] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:54:55] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:54:57] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:54:58] [ERROR] 端点 '快乐' 请求失败: 连接/超时错误: The read operation timed out
-[15:54:59] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:00] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:00] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:55:00] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:00] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[15:55:00] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:55:02] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:55:02] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:55:06] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:55:08] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:09] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:09] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:55:10] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:55:12] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:55:12] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:55:13] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:55:16] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:17] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:17] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:55:17] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:55:22] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:55:22] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:55:24] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:55:26] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:28] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:28] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:55:29] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:55:31] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:55:31] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:55:32] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:55:35] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:36] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:36] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:55:37] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:55:39] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:55:39] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:55:40] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:55:43] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:43] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:43] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:55:44] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:55:47] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:55:47] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:55:48] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:55:51] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:52] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:52] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:55:52] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:55:54] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:55:54] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:55:56] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:55:58] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:55:59] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:55:59] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:56:00] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:56:02] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:56:02] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:56:03] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:56:06] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:56:08] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:56:08] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:56:09] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:56:12] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:56:12] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:56:13] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:56:16] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:56:18] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:56:18] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:56:20] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:56:22] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:56:22] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:56:23] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:56:31] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: The read operation timed out
-[15:56:34] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:56:35] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:56:35] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:56:36] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:56:38] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:56:38] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:56:40] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:56:41] [INFO] 端点 'ZM' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:56:41] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[15:56:42] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:56:43] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:56:43] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:56:44] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:56:48] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:56:48] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:56:49] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:56:52] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:56:54] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:56:54] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:56:55] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:56:57] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:56:57] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:56:58] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:01] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:57:03] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:57:03] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:57:03] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:57:05] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:57:05] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:57:06] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:09] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:57:09] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[15:57:12] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:57:12] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:57:13] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:57:16] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:57:16] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:57:17] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:20] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:57:20] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:57:20] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:57:21] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:57:23] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:57:23] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:57:24] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:57:24] [INFO] 收到 API 请求，尝试请求端点 '公益' (模型: grok-4.5)
-[15:57:26] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
-[15:57:27] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
-[15:57:27] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[15:57:30] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:33] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:57:34] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:57:34] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:57:35] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:57:36] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[15:57:37] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:57:37] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:57:39] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:41] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:57:41] [INFO] 收到 API 请求，尝试请求端点 '公益3' (模型: grok-4.5)
-[15:57:41] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:57:42] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:57:42] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:57:43] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:57:44] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:45] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:57:45] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:57:46] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
-[15:57:46] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:46] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[15:57:49] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:57:51] [WARN] Responses 请求中 2 个工具类型不受支持已忽略: ['tool_search', 'web_search']
-[15:57:51] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
-[15:57:51] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-<!-- a padding to disable MSIE and Chrome friendly err
-[15:57:53] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[15:57:53] [INFO] 重试请求，尝试端点 '七倍' (模型: gpt-5.4)
-[15:57:54] [ERROR] 端点 '七倍' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[15:57:57] [WARN] 端点 '七倍' 触发冷却机制，下次可用时间在 30 分钟后
-[15:58:47] [ERROR] 端点 'ZM' 请求失败: HTTP 504: {"error":{"message":"openai_error","type":"bad_response_status_code","param":"","code":"bad_response_status_code"}}
-[15:58:51] [INFO] 端点 'ZM' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:58:51] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[15:58:58] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:58:58] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[15:59:36] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[15:59:38] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[15:59:38] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[15:59:52] [ERROR] 端点 'ZM' 请求失败: HTTP 504: {"error":{"message":"openai_error","type":"bad_response_status_code","param":"","code":"bad_response_status_code"}}
-[15:59:57] [INFO] 端点 'ZM' 请求失败但探活通过，视为瞬态故障，原地重试
-[15:59:57] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[16:00:07] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[16:00:09] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[16:00:09] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[16:00:37] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[16:00:40] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[16:00:40] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[16:01:06] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[16:01:07] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[16:01:07] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[16:01:11] [ERROR] 端点 'ZM' 请求失败: HTTP 503: {"error":{"message":"system cpu overloaded (current: 94.3%, threshold: 90%)","type":"new_api_error","param":"","code":"system_cpu_overloaded"}}
-[16:01:14] [INFO] 端点 'ZM' 请求失败但探活通过，视为瞬态故障，原地重试
-[16:01:14] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[16:01:20] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[16:01:26] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[16:01:29] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
-[16:01:29] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[16:01:35] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[16:02:28] [INFO] 端点 'ZM' 请求成功 (延迟: 正常)
-[16:02:30] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[16:02:30] [INFO] 收到 API 请求，尝试请求端点 'ZM' (模型: grok-4.5)
-[16:02:31] [ERROR] 端点 'ZM' 请求失败: HTTP 503: {"error":{"message":"system cpu overloaded (current: 93.0%, threshold: 90%)","type":"new_api_error","param":"","code":"system_cpu_overloaded"}}
-[16:02:33] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
-[16:02:33] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
-[16:03:08] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
-[16:03:09] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[16:03:09] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: grok-4.5)
-[16:03:17] [INFO] 健康检测完成: 检测了 29 个端点（12 个中转站）
-[16:03:32] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
-[16:03:33] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[16:03:33] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: grok-4.5)
-[16:04:07] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
+[14:35:30] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[14:38:21] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
