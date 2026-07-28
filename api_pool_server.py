@@ -61,196 +61,256 @@ def sys_log(msg, level="INFO"):
     sys_logger.log(level, msg)
     print(f"[{time.strftime('%H:%M:%S')}] [{level}] {msg}")
 
+# ============================================================
+#  SQLite 连接池（线程本地 + WAL 模式 + 单线程写队列）
+# ============================================================
+
+class SQLitePool:
+    """
+    每个线程复用同一个 SQLite 连接（thread-local），
+    WAL 模式允许读写并发，写操作通过单一后台线程串行执行消除锁争用。
+    """
+    def __init__(self, db_path, timeout=5):
+        self.db_path = db_path
+        self.timeout = timeout
+        self._local = threading.local()          # 读连接：每线程独立
+        self._write_queue = queue.Queue()        # 写队列：单线程消费
+        self._writer = threading.Thread(target=self._write_worker, daemon=True)
+        self._writer.start()
+
+    def _make_conn(self):
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-8000")  # 8MB 页缓存
+        return conn
+
+    def _write_worker(self):
+        """单一后台线程：顺序消费写队列，持久复用同一连接"""
+        conn = self._make_conn()
+        while True:
+            try:
+                sql, params, done_ev = self._write_queue.get()
+                conn.execute(sql, params)
+                conn.commit()
+            except Exception as e:
+                try: conn.rollback()
+                except Exception: pass
+                try:
+                    conn = self._make_conn()   # 连接损坏时重建
+                except Exception: pass
+                sys_log(f"SQLitePool 写入失败 ({self.db_path}): {e}", "WARN")
+            finally:
+                if done_ev:
+                    done_ev.set()
+
+    def write(self, sql, params=(), wait=False):
+        """异步写入；wait=True 时阻塞直到写完"""
+        ev = threading.Event() if wait else None
+        self._write_queue.put((sql, params, ev))
+        if ev:
+            ev.wait(timeout=10)
+
+    def read_conn(self):
+        """返回当前线程的读连接，不存在则新建"""
+        c = getattr(self._local, 'conn', None)
+        if c is None:
+            c = self._make_conn()
+            self._local.conn = c
+        return c
+
+    def query(self, sql, params=()):
+        """执行查询，返回 cursor"""
+        return self.read_conn().execute(sql, params)
+
+
 class TokenTracker:
     def __init__(self, db_path="token_stats.db"):
         self.db_path = db_path
+        self._pool = SQLitePool(db_path)
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS token_usage (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    model TEXT,
-                    prompt_tokens INTEGER,
-                    completion_tokens INTEGER,
-                    total_tokens INTEGER
-                )
-            """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON token_usage(timestamp)")
-            try:
-                conn.execute("ALTER TABLE token_usage ADD COLUMN endpoint_name TEXT DEFAULT ''")
-            except Exception:
-                pass
-            try:
-                conn.execute("ALTER TABLE token_usage ADD COLUMN cached_tokens INTEGER DEFAULT 0")
-            except Exception:
-                pass
+        # 初始化表结构
+        self._pool.write("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                model TEXT,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER
+            )
+        """, wait=True)
+        self._pool.write("CREATE INDEX IF NOT EXISTS idx_timestamp ON token_usage(timestamp)", wait=True)
+        # 检查列是否已存在再添加，避免重复 ALTER 警告
+        existing = {r[1] for r in self._pool.query("PRAGMA table_info(token_usage)").fetchall()}
+        if "endpoint_name" not in existing:
+            self._pool.write("ALTER TABLE token_usage ADD COLUMN endpoint_name TEXT DEFAULT ''", wait=True)
+        if "cached_tokens" not in existing:
+            self._pool.write("ALTER TABLE token_usage ADD COLUMN cached_tokens INTEGER DEFAULT 0", wait=True)
 
     def add_usage(self, endpoint_name, model, prompt_tokens, completion_tokens, total_tokens, cached_tokens=0):
-        def _do_insert():
-            try:
-                with sqlite3.connect(self.db_path, timeout=5) as conn:
-                    conn.execute(
-                        "INSERT INTO token_usage (endpoint_name, model, prompt_tokens, completion_tokens, total_tokens, cached_tokens) VALUES (?, ?, ?, ?, ?, ?)",
-                        (endpoint_name, model, prompt_tokens, completion_tokens, total_tokens, cached_tokens)
-                    )
-            except Exception as e:
-                sys_log(f"记录 token 消耗失败: {e}", "WARN")
-        threading.Thread(target=_do_insert, daemon=True).start()
+        # 异步写入：直接推入写队列，不再另起线程
+        self._pool.write(
+            "INSERT INTO token_usage (endpoint_name, model, prompt_tokens, completion_tokens, total_tokens, cached_tokens) VALUES (?, ?, ?, ?, ?, ?)",
+            (endpoint_name, model, prompt_tokens, completion_tokens, total_tokens, cached_tokens),
+        )
 
     def get_today_usage_by_endpoint(self, endpoint_name):
         try:
-            with sqlite3.connect(self.db_path, timeout=5) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT SUM(total_tokens) FROM token_usage WHERE endpoint_name = ? AND timestamp >= datetime(date('now', 'localtime'), 'utc')", (endpoint_name,))
-                return cursor.fetchone()[0] or 0
+            row = self._pool.query(
+                "SELECT SUM(total_tokens) FROM token_usage WHERE endpoint_name = ? AND timestamp >= datetime(date('now', 'localtime'), 'utc')",
+                (endpoint_name,)
+            ).fetchone()
+            return row[0] or 0
         except Exception:
             return 0
 
     def rename_endpoint(self, old_name: str, new_name: str):
         try:
-            with sqlite3.connect(self.db_path, timeout=5) as conn:
-                conn.execute("UPDATE token_usage SET endpoint_name = ? WHERE endpoint_name = ?", (new_name, old_name))
+            self._pool.write(
+                "UPDATE token_usage SET endpoint_name = ? WHERE endpoint_name = ?",
+                (new_name, old_name), wait=True
+            )
         except Exception as e:
             sys_log(f"重命名端点统计数据失败: {e}", "WARN")
 
     def get_stats(self, endpoint_filter=None):
-        with sqlite3.connect(self.db_path, timeout=5) as conn:
-            cursor = conn.cursor()
-            ep_cond = " AND endpoint_name = ?" if endpoint_filter and endpoint_filter != "all" else ""
-            params = (endpoint_filter,) if (endpoint_filter and endpoint_filter != "all") else ()
+        conn = self._pool.read_conn()  # 复用当前线程的读连接
+        cursor = conn.cursor()
+        ep_cond = " AND endpoint_name = ?" if endpoint_filter and endpoint_filter != "all" else ""
+        params = (endpoint_filter,) if (endpoint_filter and endpoint_filter != "all") else ()
             
-            cursor.execute(f"SELECT SUM(total_tokens), SUM(cached_tokens), SUM(prompt_tokens), COUNT(*) FROM token_usage WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}", params)
-            today_row = cursor.fetchone()
-            today = today_row[0] or 0
-            today_cached = today_row[1] or 0
-            today_prompt = today_row[2] or 0
-            today_calls = today_row[3] or 0
-            today_cache_hit_rate = round(today_cached / today_prompt * 100, 1) if today_prompt > 0 else 0
+        cursor.execute(f"SELECT SUM(total_tokens), SUM(cached_tokens), SUM(prompt_tokens), COUNT(*) FROM token_usage WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}", params)
+        today_row = cursor.fetchone()
+        today = today_row[0] or 0
+        today_cached = today_row[1] or 0
+        today_prompt = today_row[2] or 0
+        today_calls = today_row[3] or 0
+        today_cache_hit_rate = round(today_cached / today_prompt * 100, 1) if today_prompt > 0 else 0
+        
+        cursor.execute(f"SELECT SUM(total_tokens) FROM token_usage WHERE timestamp >= datetime(date('now', '-2 days', 'localtime'), 'utc'){ep_cond}", params)
+        last_3_days = cursor.fetchone()[0] or 0
+        cursor.execute(f"SELECT SUM(total_tokens) FROM token_usage WHERE timestamp >= datetime(date('now', '-6 days', 'localtime'), 'utc'){ep_cond}", params)
+        last_7_days = cursor.fetchone()[0] or 0
+        cursor.execute(f"SELECT SUM(total_tokens), SUM(cached_tokens), SUM(prompt_tokens), COUNT(*) FROM token_usage WHERE timestamp >= datetime(date('now', '-29 days', 'localtime'), 'utc'){ep_cond}", params)
+        month_row = cursor.fetchone()
+        last_30_days = month_row[0] or 0
+        month_cached = month_row[1] or 0
+        month_prompt = month_row[2] or 0
+        month_calls = month_row[3] or 0
+        month_cache_hit_rate = round(month_cached / month_prompt * 100, 1) if month_prompt > 0 else 0
+        
+        cursor.execute(f"""
+            SELECT date(timestamp, 'localtime') as d, SUM(total_tokens), SUM(prompt_tokens), SUM(cached_tokens), SUM(completion_tokens)
+            FROM token_usage
+            WHERE timestamp >= datetime(date('now', '-13 days', 'localtime'), 'utc'){ep_cond}
+            GROUP BY d
+        """, params)
+        raw_trend = {r[0]: {"total": r[1] or 0, "prompt": r[2] or 0, "cached": r[3] or 0, "completion": r[4] or 0} for r in cursor.fetchall()}
+        trend_14d = []
+        now = datetime.now()
+        for i in range(13, -1, -1):
+            d_str = (now - timedelta(days=i)).strftime('%Y-%m-%d')
+            data = raw_trend.get(d_str, {"total": 0, "prompt": 0, "cached": 0, "completion": 0})
+            trend_14d.append({"date": d_str, "tokens": data["total"], "prompt": data["prompt"], "cached": data["cached"], "completion": data["completion"]})
             
-            cursor.execute(f"SELECT SUM(total_tokens) FROM token_usage WHERE timestamp >= datetime(date('now', '-2 days', 'localtime'), 'utc'){ep_cond}", params)
-            last_3_days = cursor.fetchone()[0] or 0
-            cursor.execute(f"SELECT SUM(total_tokens) FROM token_usage WHERE timestamp >= datetime(date('now', '-6 days', 'localtime'), 'utc'){ep_cond}", params)
-            last_7_days = cursor.fetchone()[0] or 0
-            cursor.execute(f"SELECT SUM(total_tokens), SUM(cached_tokens), SUM(prompt_tokens), COUNT(*) FROM token_usage WHERE timestamp >= datetime(date('now', '-29 days', 'localtime'), 'utc'){ep_cond}", params)
-            month_row = cursor.fetchone()
-            last_30_days = month_row[0] or 0
-            month_cached = month_row[1] or 0
-            month_prompt = month_row[2] or 0
-            month_calls = month_row[3] or 0
-            month_cache_hit_rate = round(month_cached / month_prompt * 100, 1) if month_prompt > 0 else 0
+        cursor.execute(f"""
+            SELECT strftime('%H', datetime(timestamp, 'localtime')) as h, SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens)
+            FROM token_usage
+            WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}
+            GROUP BY h
+        """, params)
+        raw_hourly = {r[0]: (r[1], r[2], r[3] or 0, r[4] or 0) for r in cursor.fetchall()}
+        trend_today_hourly = []
+        for i in range(24):
+            h_str = f"{i:02d}"
+            val = raw_hourly.get(h_str, (0, 0, 0, 0))
+            missed = max(0, val[2] - val[3])
+            trend_today_hourly.append({"date": f"{h_str}:00", "tokens": val[0] or 0, "calls": val[1] or 0, "missed": missed})
             
-            cursor.execute(f"""
-                SELECT date(timestamp, 'localtime') as d, SUM(total_tokens), SUM(prompt_tokens), SUM(cached_tokens), SUM(completion_tokens)
-                FROM token_usage
-                WHERE timestamp >= datetime(date('now', '-13 days', 'localtime'), 'utc'){ep_cond}
-                GROUP BY d
-            """, params)
-            raw_trend = {r[0]: {"total": r[1] or 0, "prompt": r[2] or 0, "cached": r[3] or 0, "completion": r[4] or 0} for r in cursor.fetchall()}
-            trend_14d = []
-            now = datetime.now()
-            for i in range(13, -1, -1):
-                d_str = (now - timedelta(days=i)).strftime('%Y-%m-%d')
-                data = raw_trend.get(d_str, {"total": 0, "prompt": 0, "cached": 0, "completion": 0})
-                trend_14d.append({"date": d_str, "tokens": data["total"], "prompt": data["prompt"], "cached": data["cached"], "completion": data["completion"]})
-                
-            cursor.execute(f"""
-                SELECT strftime('%H', datetime(timestamp, 'localtime')) as h, SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens)
-                FROM token_usage
-                WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}
-                GROUP BY h
-            """, params)
-            raw_hourly = {r[0]: (r[1], r[2], r[3] or 0, r[4] or 0) for r in cursor.fetchall()}
-            trend_today_hourly = []
-            for i in range(24):
-                h_str = f"{i:02d}"
-                val = raw_hourly.get(h_str, (0, 0, 0, 0))
-                missed = max(0, val[2] - val[3])
-                trend_today_hourly.append({"date": f"{h_str}:00", "tokens": val[0] or 0, "calls": val[1] or 0, "missed": missed})
-                
-            cursor.execute(f"""
-                SELECT endpoint_name, model, SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens)
-                FROM token_usage
-                WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}
-                GROUP BY endpoint_name, model
-                ORDER BY SUM(total_tokens) DESC
-            """, params)
-            today_endpoints = [{"endpoint": r[0] or "未知端点", "model": r[1], "tokens": r[2] or 0, "calls": r[3] or 0, "cache_hit_rate": round((r[5] or 0)/(r[4] or 1)*100, 1) if (r[4] or 0) > 0 else 0} for r in cursor.fetchall()]
-            
-            cursor.execute(f"""
-                SELECT endpoint_name, model, SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens)
-                FROM token_usage
-                WHERE strftime('%Y-%m', timestamp, 'localtime') = strftime('%Y-%m', 'now', 'localtime'){ep_cond}
-                GROUP BY endpoint_name, model
-                ORDER BY SUM(total_tokens) DESC
-            """, params)
-            month_endpoints = [{"endpoint": r[0] or "未知端点", "model": r[1], "tokens": r[2] or 0, "calls": r[3] or 0, "cache_hit_rate": round((r[5] or 0)/(r[4] or 1)*100, 1) if (r[4] or 0) > 0 else 0} for r in cursor.fetchall()]
+        cursor.execute(f"""
+            SELECT endpoint_name, model, SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens)
+            FROM token_usage
+            WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}
+            GROUP BY endpoint_name, model
+            ORDER BY SUM(total_tokens) DESC
+        """, params)
+        today_endpoints = [{"endpoint": r[0] or "未知端点", "model": r[1], "tokens": r[2] or 0, "calls": r[3] or 0, "cache_hit_rate": round((r[5] or 0)/(r[4] or 1)*100, 1) if (r[4] or 0) > 0 else 0} for r in cursor.fetchall()]
+        
+        cursor.execute(f"""
+            SELECT endpoint_name, model, SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens)
+            FROM token_usage
+            WHERE strftime('%Y-%m', timestamp, 'localtime') = strftime('%Y-%m', 'now', 'localtime'){ep_cond}
+            GROUP BY endpoint_name, model
+            ORDER BY SUM(total_tokens) DESC
+        """, params)
+        month_endpoints = [{"endpoint": r[0] or "未知端点", "model": r[1], "tokens": r[2] or 0, "calls": r[3] or 0, "cache_hit_rate": round((r[5] or 0)/(r[4] or 1)*100, 1) if (r[4] or 0) > 0 else 0} for r in cursor.fetchall()]
 
-            def _model_rows(sql):
-                cursor.execute(sql, params)
-                rows = []
-                for r in cursor.fetchall():
-                    prompt = r[3] or 0
-                    cached = r[4] or 0
-                    completion = r[5] or 0
-                    tokens = r[1] or 0
-                    rows.append({
-                        "model": (r[0] or "未知模型"),
-                        "tokens": tokens,
-                        "calls": r[2] or 0,
-                        "prompt_tokens": prompt,
-                        "cached_tokens": cached,
-                        "completion_tokens": completion,
-                        "cache_hit_rate": round(cached / prompt * 100, 1) if prompt > 0 else 0,
-                    })
-                total_tokens = sum(x["tokens"] for x in rows) or 0
-                for x in rows:
-                    x["share"] = round(x["tokens"] / total_tokens * 100, 1) if total_tokens > 0 else 0
-                return rows
+        def _model_rows(sql):
+            cursor.execute(sql, params)
+            rows = []
+            for r in cursor.fetchall():
+                prompt = r[3] or 0
+                cached = r[4] or 0
+                completion = r[5] or 0
+                tokens = r[1] or 0
+                rows.append({
+                    "model": (r[0] or "未知模型"),
+                    "tokens": tokens,
+                    "calls": r[2] or 0,
+                    "prompt_tokens": prompt,
+                    "cached_tokens": cached,
+                    "completion_tokens": completion,
+                    "cache_hit_rate": round(cached / prompt * 100, 1) if prompt > 0 else 0,
+                })
+            total_tokens = sum(x["tokens"] for x in rows) or 0
+            for x in rows:
+                x["share"] = round(x["tokens"] / total_tokens * 100, 1) if total_tokens > 0 else 0
+            return rows
 
-            today_models = _model_rows(f"""
-                SELECT COALESCE(NULLIF(TRIM(model), ''), '未知模型') as m,
-                       SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens), SUM(completion_tokens)
-                FROM token_usage
-                WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}
-                GROUP BY m
-                ORDER BY SUM(total_tokens) DESC
-            """)
-            month_models = _model_rows(f"""
-                SELECT COALESCE(NULLIF(TRIM(model), ''), '未知模型') as m,
-                       SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens), SUM(completion_tokens)
-                FROM token_usage
-                WHERE strftime('%Y-%m', timestamp, 'localtime') = strftime('%Y-%m', 'now', 'localtime'){ep_cond}
-                GROUP BY m
-                ORDER BY SUM(total_tokens) DESC
-            """)
+        today_models = _model_rows(f"""
+            SELECT COALESCE(NULLIF(TRIM(model), ''), '未知模型') as m,
+                   SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens), SUM(completion_tokens)
+            FROM token_usage
+            WHERE timestamp >= datetime(date('now', 'localtime'), 'utc'){ep_cond}
+            GROUP BY m
+            ORDER BY SUM(total_tokens) DESC
+        """)
+        month_models = _model_rows(f"""
+            SELECT COALESCE(NULLIF(TRIM(model), ''), '未知模型') as m,
+                   SUM(total_tokens), COUNT(*), SUM(prompt_tokens), SUM(cached_tokens), SUM(completion_tokens)
+            FROM token_usage
+            WHERE strftime('%Y-%m', timestamp, 'localtime') = strftime('%Y-%m', 'now', 'localtime'){ep_cond}
+            GROUP BY m
+            ORDER BY SUM(total_tokens) DESC
+        """)
 
-            cursor.execute("SELECT DISTINCT endpoint_name FROM token_usage WHERE endpoint_name IS NOT NULL")
-            all_endpoints_list = [r[0] for r in cursor.fetchall()]
+        cursor.execute("SELECT DISTINCT endpoint_name FROM token_usage WHERE endpoint_name IS NOT NULL")
+        all_endpoints_list = [r[0] for r in cursor.fetchall()]
 
-            return {
-                "today": today,
-                "today_cached": today_cached,
-                "today_missed": max(0, today_prompt - today_cached),
-                "today_calls": today_calls,
-                "today_cache_hit_rate": today_cache_hit_rate,
-                "last_3_days": last_3_days,
-                "last_7_days": last_7_days,
-                "last_30_days": last_30_days,
-                "month_cached": month_cached,
-                "month_missed": max(0, month_prompt - month_cached),
-                "month_calls": month_calls,
-                "month_cache_hit_rate": month_cache_hit_rate,
-                "trend_14d": trend_14d,
-                "trend_today_hourly": trend_today_hourly,
-                "today_endpoints": today_endpoints,
-                "month_endpoints": month_endpoints,
-                "today_models": today_models,
-                "month_models": month_models,
-                "all_endpoints_list": all_endpoints_list
-            }
+        return {
+            "today": today,
+            "today_cached": today_cached,
+            "today_missed": max(0, today_prompt - today_cached),
+            "today_calls": today_calls,
+            "today_cache_hit_rate": today_cache_hit_rate,
+            "last_3_days": last_3_days,
+            "last_7_days": last_7_days,
+            "last_30_days": last_30_days,
+            "month_cached": month_cached,
+            "month_missed": max(0, month_prompt - month_cached),
+            "month_calls": month_calls,
+            "month_cache_hit_rate": month_cache_hit_rate,
+            "trend_14d": trend_14d,
+            "trend_today_hourly": trend_today_hourly,
+            "today_endpoints": today_endpoints,
+            "month_endpoints": month_endpoints,
+            "today_models": today_models,
+            "month_models": month_models,
+            "all_endpoints_list": all_endpoints_list
+        }
 
     def export_csv(self):
         import csv
@@ -258,32 +318,30 @@ class TokenTracker:
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["ID", "Timestamp", "Endpoint", "Model", "Prompt Tokens", "Completion Tokens", "Total Tokens", "Cached Tokens"])
-        with sqlite3.connect(self.db_path, timeout=5) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, timestamp, endpoint_name, model, prompt_tokens, completion_tokens, total_tokens, cached_tokens FROM token_usage ORDER BY id DESC")
-            for row in cursor.fetchall():
-                writer.writerow(row)
+        cursor = self._pool.query("SELECT id, timestamp, endpoint_name, model, prompt_tokens, completion_tokens, total_tokens, cached_tokens FROM token_usage ORDER BY id DESC")
+        for row in cursor.fetchall():
+            writer.writerow(row)
         return output.getvalue()
 
     def clear_data(self):
-        with sqlite3.connect(self.db_path, timeout=5) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM token_usage")
-            conn.commit()
+        self._pool.write("DELETE FROM token_usage", wait=True)
 
 token_tracker = TokenTracker()
 
 class ChatLogger:
-    def __init__(self, db_path="chat_logs.db"):
+    def __init__(self, db_path="chat_logs.db", max_records=10000, max_text_length=2000, cleanup_days=30):
         self.db_path = db_path
         self._lock = threading.Lock()
+        self._pool = SQLitePool(db_path)
+        self.max_records = max_records
+        self.max_text_length = max_text_length
+        self.cleanup_days = cleanup_days
         self._init_db()
+        self._startup_cleanup()
 
     def _init_db(self):
         with self._lock:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS chat_logs (
+            self._pool.write('''CREATE TABLE IF NOT EXISTS chat_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 endpoint_name TEXT,
@@ -292,69 +350,79 @@ class ChatLogger:
                 completion TEXT,
                 total_tokens INTEGER,
                 latency_ms INTEGER
-            )''')
-            conn.commit()
-            conn.close()
+            )''', wait=True)
+            self._pool.write('CREATE INDEX IF NOT EXISTS idx_timestamp ON chat_logs(timestamp)', wait=True)
+            self._pool.write('CREATE INDEX IF NOT EXISTS idx_endpoint ON chat_logs(endpoint_name)', wait=True)
+
+    def _truncate_text(self, text, max_length=None):
+        """截断文本到指定长度，保留摘要"""
+        if max_length is None:
+            max_length = self.max_text_length
+        if not text or len(text) <= max_length:
+            return text
+        # 保留前面大部分和结尾一小部分
+        keep_start = int(max_length * 0.8)
+        keep_end = max_length - keep_start - 20
+        return text[:keep_start] + "\n...[截断]...\n" + text[-keep_end:] if keep_end > 0 else text[:keep_start] + "\n...[截断]"
+
+    def _startup_cleanup(self):
+        """启动时自动清理旧数据"""
+        def _cleanup():
+            try:
+                with self._lock:
+                    conn = self._pool.read_conn()
+                    # 1. 删除超过保留天数的记录
+                    self._pool.write("DELETE FROM chat_logs WHERE timestamp < datetime('now', ?)", (f'-{self.cleanup_days} days',), wait=True)
+                    # 2. 如果记录数超过限制，删除最旧的
+                    row = conn.execute("SELECT COUNT(*) FROM chat_logs").fetchone()
+                    total = row[0]
+                    deleted_excess = 0
+                    if total > self.max_records:
+                        self._pool.write("DELETE FROM chat_logs WHERE id IN (SELECT id FROM chat_logs ORDER BY timestamp ASC LIMIT ?)", (total - self.max_records,), wait=True)
+                        deleted_excess = total - self.max_records
+                    # 3. 执行 VACUUM 压缩数据库（在写线程中执行）
+                    self._pool.write("VACUUM", wait=True)
+                    if deleted_excess > 0:
+                        sys_log(f"数据库自动清理: 删除 {deleted_excess} 条超限记录", "INFO")
+            except Exception as e:
+                sys_log(f"数据库启动清理失败: {e}", "WARN")
+        threading.Thread(target=_cleanup, daemon=True).start()
 
     def add_log(self, endpoint_name, model, prompt, completion, total_tokens, latency_ms):
-        def _write():
-            with self._lock:
-                try:
-                    conn = sqlite3.connect(self.db_path)
-                    c = conn.cursor()
-                    c.execute(
-                        "INSERT INTO chat_logs (endpoint_name, model, prompt, completion, total_tokens, latency_ms) VALUES (?, ?, ?, ?, ?, ?)",
-                        (endpoint_name, model, prompt, completion, total_tokens, latency_ms)
-                    )
-                    conn.commit()
-                    conn.close()
-                except Exception as e:
-                    sys_log(f"记录对话日志失败: {e}", "ERROR")
-        threading.Thread(target=_write, daemon=True).start()
+        # 截断过长的文本，异步写入队列
+        truncated_prompt = self._truncate_text(prompt)
+        truncated_completion = self._truncate_text(completion)
+        self._pool.write(
+            "INSERT INTO chat_logs (endpoint_name, model, prompt, completion, total_tokens, latency_ms) VALUES (?, ?, ?, ?, ?, ?)",
+            (endpoint_name, model, truncated_prompt, truncated_completion, total_tokens, latency_ms)
+        )
 
     def get_logs(self, limit=50, offset=0):
-        with self._lock:
-            try:
-                conn = sqlite3.connect(self.db_path)
-                c = conn.cursor()
-                c.execute(
-                    "SELECT id, datetime(timestamp, 'localtime'), endpoint_name, model, prompt, completion, total_tokens, latency_ms FROM chat_logs ORDER BY id DESC LIMIT ? OFFSET ?",
-                    (limit, offset)
-                )
-                rows = c.fetchall()
-                
-                c.execute("SELECT COUNT(*) FROM chat_logs")
-                total = c.fetchone()[0]
-                conn.close()
-                
-                return {
-                    "total": total,
-                    "logs": [
-                        {
-                            "id": r[0],
-                            "timestamp": r[1],
-                            "endpoint_name": r[2],
-                            "model": r[3],
-                            "prompt": r[4],
-                            "completion": r[5],
-                            "total_tokens": r[6],
-                            "latency_ms": r[7]
-                        } for r in rows
-                    ]
-                }
-            except Exception as e:
-                return {"total": 0, "logs": [], "error": str(e)}
+        try:
+            conn = self._pool.read_conn()
+            rows = conn.execute(
+                "SELECT id, datetime(timestamp, 'localtime'), endpoint_name, model, prompt, completion, total_tokens, latency_ms FROM chat_logs ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset)
+            ).fetchall()
+            total = conn.execute("SELECT COUNT(*) FROM chat_logs").fetchone()[0]
+            return {
+                "total": total,
+                "logs": [
+                    {
+                        "id": r[0], "timestamp": r[1], "endpoint_name": r[2],
+                        "model": r[3], "prompt": r[4], "completion": r[5],
+                        "total_tokens": r[6], "latency_ms": r[7]
+                    } for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"total": 0, "logs": [], "error": str(e)}
 
     def clear_logs(self):
-        with self._lock:
-            try:
-                conn = sqlite3.connect(self.db_path)
-                c = conn.cursor()
-                c.execute("DELETE FROM chat_logs")
-                conn.commit()
-                conn.close()
-            except Exception:
-                pass
+        try:
+            self._pool.write("DELETE FROM chat_logs", wait=True)
+        except Exception:
+            pass
 
 chat_logger = ChatLogger()
 
@@ -423,10 +491,13 @@ class Endpoint:
 
     _transient_count: int = field(default=0, repr=False)
     _transient_window_start: float = field(default=0, repr=False)
-    _health: str = field(default="unknown", repr=False) 
+    _health: str = field(default="unknown", repr=False)
     _health_latency_ms: int = field(default=-1, repr=False)
     _health_last_check: float = field(default=0, repr=False)
     _health_error: str = field(default="", repr=False)
+
+    # 性能可视化：实际请求延迟样本（最多保留50个）
+    _latency_samples: deque = field(default_factory=lambda: deque(maxlen=50), repr=False)
 
 
 def station_key(base_url):
@@ -469,6 +540,11 @@ class APIPool:
         self.model_aliases = {}
         # 中转站级设置: {station_key: {"health_paused": bool, "connect_paused": bool}}
         self.station_settings = {}
+        # 健康检测结果缓存（5秒TTL，减少重复计算开销）
+        self._list_cache = None
+        self._list_cache_ts = 0
+        self._chain_cache = None
+        self._chain_cache_ts = 0
         if endpoints:
             for ep in endpoints:
                 self.add_endpoint(ep)
@@ -618,10 +694,21 @@ class APIPool:
 
     def list_endpoints(self):
         now = time.time()
+        # 5秒缓存，减少频繁轮询时的锁争用
+        if self._list_cache is not None and (now - self._list_cache_ts) < 5.0:
+            return self._list_cache
         with self._lock:
             active = [ep for ep in self._endpoints if ep.enabled]
             current_ep = active[self._current_idx] if active and self._current_idx < len(active) else None
-            return [self._ep_to_dict(ep, ep is current_ep, now) for ep in self._endpoints]
+            result = [self._ep_to_dict(ep, ep is current_ep, now) for ep in self._endpoints]
+        self._list_cache = result
+        self._list_cache_ts = now
+        return result
+
+    def _invalidate_cache(self):
+        """端点状态变化时清除缓存"""
+        self._list_cache = None
+        self._chain_cache = None
 
     def _ep_to_dict(self, ep, is_current, now):
         return {
@@ -664,10 +751,16 @@ class APIPool:
             "station": station_key(ep.base_url),
             "station_health_paused": self.is_station_health_paused(ep),
             "station_connect_paused": self.is_station_connect_paused(ep),
+            # 性能可视化：成功率和平均延迟
+            "success_rate": round(ep._total_calls / max(1, ep._total_calls + ep._total_failures) * 100, 1),
+            "avg_latency_ms": int(sum(ep._latency_samples) / len(ep._latency_samples)) if ep._latency_samples else None,
         }
 
     def get_active_chain(self):
         now = time.time()
+        # 5秒缓存
+        if self._chain_cache is not None and (now - self._chain_cache_ts) < 5.0:
+            return self._chain_cache
         health_rank = {"ok": 0, "slow": 1, "testing": 2, "unknown": 3, "bad": 4}
         with self._lock:
             active = list(self._active_endpoints())
@@ -676,7 +769,6 @@ class APIPool:
                 current_ep = next((ep for ep in active if ep.id == self._manual_override_id), None)
             if current_ep is None:
                 current_ep = active[self._current_idx] if active and self._current_idx < len(active) else None
-            # 聚合链展示：联通正常优先顶置，其次慢/未知/异常；同档按优先级与延迟排序
             active.sort(key=lambda ep: (
                 1 if ep._cooldown_until > now else 0,
                 health_rank.get(ep._health or "unknown", 3),
@@ -684,7 +776,7 @@ class APIPool:
                 ep._health_latency_ms if ep._health_latency_ms is not None and ep._health_latency_ms >= 0 else 10**9,
                 ep.name or "",
             ))
-            return [
+            result = [
                 {
                     "name": ep.name,
                     "model": ep.model,
@@ -706,6 +798,9 @@ class APIPool:
                 }
                 for ep in active
             ]
+        self._chain_cache = result
+        self._chain_cache_ts = now
+        return result
 
     def reset(self):
         with self._lock:
@@ -961,16 +1056,52 @@ class APIPool:
         return fallback
 
     def _pick_best(self, active):
-        for ep in active:
-            if not self._is_in_cooldown(ep):
-                return ep
-        return min(active, key=lambda e: e._cooldown_until) if active else None
+        """
+        在同一优先级层内按历史成功率加权随机选择，
+        而非总是选第一个——避免所有流量都打到单一端点。
+        权重公式：w = successes / (successes + failures)，
+        新端点（调用数 < 10）默认按 70% 成功率估算；
+        健康状态 ok/slow 小幅加成，bad/unknown 降权。
+        """
+        available = [ep for ep in active if not self._is_in_cooldown(ep)]
+        if not available:
+            # 全部冷却中，选最快恢复的
+            return min(active, key=lambda e: e._cooldown_until) if active else None
+
+        # 只在最高优先级层内竞争（数字越小优先级越高）
+        min_priority = min(ep.priority for ep in available)
+        top_tier = [ep for ep in available if ep.priority == min_priority]
+
+        if len(top_tier) == 1:
+            return top_tier[0]
+
+        # 计算权重
+        weights = []
+        for ep in top_tier:
+            total = ep._total_calls + ep._total_failures
+            if total < 10:
+                w = 0.7   # 新端点：假设70%成功率，给机会试探
+            else:
+                w = ep._total_calls / total
+            # 健康状态修正
+            h = ep._health
+            if h == "ok":
+                w = min(1.0, w * 1.15)
+            elif h == "slow":
+                w = w * 0.85
+            elif h == "bad":
+                w = w * 0.4
+            # 保底权重 0.05，避免端点完全饿死
+            weights.append(max(0.05, w))
+
+        return random.choices(top_tier, weights=weights, k=1)[0]
 
     def _rotate(self, failed_ep, error_msg, probe_failed=False, requested_model=None):
         failed_ep._fail_count += 1
         failed_ep._total_failures += 1
         failed_ep._last_error = error_msg
         failed_ep._last_error_ts = time.time()
+        self._invalidate_cache()
         if probe_failed:
             failed_ep._cooldown_until = time.time() + 30
             sys_log(f"端点 '{failed_ep.name}' 探活失败，短冷却 30 秒", "WARN")
@@ -986,7 +1117,7 @@ class APIPool:
                     return
             self._current_idx = 0
 
-    def _on_success(self, ep, result=None, requested_model=None):
+    def _on_success(self, ep, result=None, requested_model=None, latency_ms=None):
         ep._total_calls += 1
         ep._last_success_ts = time.time()
         ep._health = "ok"
@@ -995,6 +1126,10 @@ class APIPool:
         ep._transient_window_start = 0
         ep._last_error = ""
         self._clear_cooldown(ep)
+        self._invalidate_cache()
+        # 记录实际请求延迟（用于性能可视化）
+        if latency_ms is not None and latency_ms > 0:
+            ep._latency_samples.append(latency_ms)
         if self._manual_override_id and self._manual_override_id != ep.id:
             self._manual_override_id = None
         if isinstance(result, dict):
@@ -1110,18 +1245,20 @@ class APIPool:
             else:
                 sys_log(f"重试请求，尝试端点 '{ep.name}' (模型: {ep_model})", "INFO")
 
+            _t_call_start = time.time()
             result, error = self._try_endpoint(ep, payload, ep_timeout)
             if result is not None:
                 if isinstance(result, dict):
                     result["model"] = alias_name or target_model or ep.model
+                _call_ms = int((time.time() - _t_call_start) * 1000)
                 with self._lock:
-                    self._on_success(ep, result, target_model)
-                sys_log(f"端点 '{ep.name}' 请求成功 (延迟: 正常)", "INFO")
+                    self._on_success(ep, result, target_model, latency_ms=_call_ms)
+                sys_log(f"端点 '{ep.name}' 请求成功 (延迟: {_call_ms}ms)", "INFO")
                 if return_endpoint: return result, ep
                 return result
             errors.append(f"[{ep.name}] {error}")
             sys_log(f"端点 '{ep.name}' 请求失败: {error}", "ERROR")
-            time.sleep(1.5)
+            time.sleep(0.3)
             try:
                 if self._probe_endpoint(ep):
                     with self._lock:
@@ -1888,11 +2025,70 @@ def ensure_config():
 
 ensure_config()
 
+HEALTH_QUICK_INTERVAL = 60   # 健康状态异常端点快速复检间隔（秒）
+
 def _health_check_loop():
+    """
+    智能健康检测：
+    - 每 60 秒：仅对 health==bad 且【不在冷却期】的端点快速复检
+      （冷却中的端点已由 _cleanup_expired_cooldowns 在到期时自动探活，不重复打扰）
+    - 每 600 秒：对所有端点做一次全量检测
+    """
+    last_full_check = 0
     while True:
-        time.sleep(HEALTH_CHECK_INTERVAL)
-        try: pool.check_all_health()
-        except Exception: pass
+        time.sleep(HEALTH_QUICK_INTERVAL)
+        now = time.time()
+        try:
+            if now - last_full_check >= HEALTH_CHECK_INTERVAL:
+                pool.check_all_health()
+                last_full_check = now
+            else:
+                # 只复检 health==bad 且未在冷却期的端点
+                # 冷却中 = 因 429/5xx 触发了惩罚冷却，不应再打扰，等冷却到期自动恢复
+                with pool._lock:
+                    bad_eps = [
+                        ep for ep in pool._endpoints
+                        if ep.enabled
+                        and not pool.is_station_health_paused(ep)
+                        and ep.health_mode != "none"
+                        and ep._health == "bad"
+                        and ep._cooldown_until <= now   # 排除冷却期端点
+                    ]
+                if bad_eps:
+                    sys_log(f"快速复检 {len(bad_eps)} 个异常端点 (排除冷却中)...", "INFO")
+                    with ThreadPoolExecutor(max_workers=min(len(bad_eps), 5)) as ex:
+                        futures = {ex.submit(pool._check_one_health, ep): ep for ep in bad_eps}
+                        results = []
+                        for fut in as_completed(futures):
+                            try: results.append(fut.result())
+                            except Exception as e: results.append((futures[fut].id, "bad", -1, str(e)))
+                    ts = time.time()
+                    with pool._lock:
+                        id_map = {ep.id: ep for ep in pool._endpoints}
+                        for ep_id, health, latency, error in results:
+                            ep = id_map.get(ep_id)
+                            if ep:
+                                ep._health = health
+                                ep._health_latency_ms = latency
+                                ep._health_last_check = ts
+                                ep._health_error = error
+                    pool._invalidate_cache()
+                    recovered = sum(1 for _, h, _, _ in results if h == "ok")
+                    if recovered:
+                        sys_log(f"快速复检完成：{recovered}/{len(bad_eps)} 个端点已恢复", "INFO")
+        except Exception as e:
+            sys_log(f"健康检测循环异常: {e}", "WARN")
+
+# 每 24 小时自动清理 + 压缩数据库
+DB_MAINTENANCE_INTERVAL = 86400
+def _db_maintenance_loop():
+    while True:
+        time.sleep(DB_MAINTENANCE_INTERVAL)
+        try:
+            chat_logger._startup_cleanup()
+            sys_log("定时数据库维护完成", "INFO")
+        except Exception as e:
+            sys_log(f"定时数据库维护失败: {e}", "WARN")
 
 pool = APIPool(default_payload={"temperature": 0.7})
 for ep_data in load_config(): pool.add_endpoint(ep_data)
@@ -1902,6 +2098,10 @@ pool.model_aliases = load_model_aliases()
 _health_thread = threading.Thread(target=_health_check_loop, daemon=True)
 _health_thread.start()
 threading.Thread(target=pool.check_all_health, daemon=True).start()
+
+# 启动数据库定期维护线程
+_db_maintenance_thread = threading.Thread(target=_db_maintenance_loop, daemon=True)
+_db_maintenance_thread.start()
 
 
 def list_openai_models():
@@ -2458,6 +2658,35 @@ def api_handler(method, path, body):
 
     if method == "GET" and cp == "/api/endpoints": return 200, pool.list_endpoints(), False
     if method == "GET" and cp == "/api/chain": return 200, pool.get_active_chain(), False
+    if method == "GET" and cp == "/api/endpoint-perf":
+        now = time.time()
+        with pool._lock:
+            endpoints = list(pool._endpoints)
+        result = []
+        for ep in endpoints:
+            samples = list(ep._latency_samples)
+            total = ep._total_calls + ep._total_failures
+            result.append({
+                "id": ep.id,
+                "name": ep.name,
+                "model": ep.model,
+                "priority": ep.priority,
+                "enabled": ep.enabled,
+                "success_rate": round(ep._total_calls / max(1, total) * 100, 1),
+                "total_calls": ep._total_calls,
+                "total_failures": ep._total_failures,
+                "avg_latency_ms": int(sum(samples) / len(samples)) if samples else None,
+                "min_latency_ms": int(min(samples)) if samples else None,
+                "max_latency_ms": int(max(samples)) if samples else None,
+                "p90_latency_ms": int(sorted(samples)[int(len(samples) * 0.9)]) if len(samples) >= 10 else None,
+                "latency_history": samples[-20:],  # 最近20个样本用于趋势图
+                "health": ep._health,
+                "health_latency_ms": ep._health_latency_ms,
+                "last_success": ep._last_success_ts,
+            })
+        # 按成功率降序排列
+        result.sort(key=lambda x: (-x["success_rate"], -(x["total_calls"])))
+        return 200, result, False
     if method == "GET" and cp == "/api/stations": return 200, pool.list_stations(), False
     if method == "PUT" and cp.startswith("/api/stations/"):
         key = unquote(cp.split("/api/stations/", 1)[1])
@@ -3610,6 +3839,15 @@ function hBadge(h,lat){
   return`<span class="badge ${c}">${l}${lat>=0?' '+lat+'ms':''}</span>`;
 }
 
+function isEpAbnormal(ep){return ep.in_cooldown||!ep.enabled||ep.health==='bad'||ep.is_rpm_limited||ep.station_connect_paused||ep.station_health_paused||(ep.daily_limit>0&&ep.today_used>=ep.daily_limit);}
+function toggleEpBad(btn){
+  const body=document.getElementById('ep-bad-body');
+  const nowOpen=body.style.display==='none';
+  body.style.display=nowOpen?'':'none';
+  const cnt=body.querySelectorAll('.ep-item').length;
+  btn.innerHTML=(nowOpen?'▲ 收起':'▼ 展开')+` ${cnt} 个异常/停用端点`;
+  sessionStorage.setItem('ep-bad-open',nowOpen?'1':'0');
+}
 function renderEndpoints(eps){
   if(stationFilter)eps=eps.filter(e=>e.station===stationFilter);
   if(epFilter==='enabled')eps=eps.filter(e=>e.enabled);
@@ -3617,7 +3855,7 @@ function renderEndpoints(eps){
   const c=document.getElementById('filterCount');if(c)c.textContent=(stationFilter?`[${stationFilter}] `:'')+`${eps.length} 个`;
   const el=document.getElementById('epList');
   if(!eps.length){el.innerHTML='<div class="empty">暂无端点</div>';return;}
-  el.innerHTML=eps.map(ep=>{
+  const _epCard=(ep)=>{
     let cls='ep-item';
     if(!ep.enabled)cls+=' disabled';
     if(ep.is_current)cls+=' current';
@@ -3658,29 +3896,54 @@ function renderEndpoints(eps){
       </div>
       ${ep.last_error?`<div class="ep-error">⚠ ${esc(ep.last_error)}</div>`:''}
     </div>`;
-  }).join('');
+  };
+  const normal=eps.filter(ep=>!isEpAbnormal(ep));
+  const bad=eps.filter(ep=>isEpAbnormal(ep));
+  let html=normal.map(_epCard).join('');
+  if(bad.length){
+    const open=sessionStorage.getItem('ep-bad-open')==='1';
+    html+=`<div style="margin:6px 0 0"><button class="btn btn-ghost" style="width:100%;justify-content:center;padding:8px 12px;border:1px dashed rgba(255,255,255,.12);border-radius:8px;color:var(--text-dim);font-size:12px;gap:6px" onclick="toggleEpBad(this)">${open?'▲ 收起':'▼ 展开'} ${bad.length} 个异常/停用端点</button><div id="ep-bad-body" ${open?'':'style="display:none"'}>${bad.map(_epCard).join('')}</div></div>`;
+  }
+  el.innerHTML=html;
 }
 
 function renderChain(chain){
   const el=document.getElementById('chainList');
   if(!chain.length){el.innerHTML='<div class="empty">没有启用的端点</div>';return;}
-  el.innerHTML=chain.map((it,i)=>{
+  const isChainBad=(it)=>it.in_cooldown||(it.health==='bad'&&!it.is_current);
+  const normal=chain.filter(it=>!isChainBad(it));
+  const bad=chain.filter(it=>isChainBad(it));
+  const _chainItem=(it,isLast)=>{
     let cls='chain-item';
     if(it.in_cooldown)cls+=' cooldown';
     else if(it.is_current)cls+=' active';
     else if(it.health==='bad'||it.fail_count>0)cls+=' failed';
     const st=it.in_cooldown?'<span class="badge badge-warning">冷却中</span>':(it.is_current?'<span class="badge badge-success">服务中</span>':'');
-    const h=it.health, lat=it.health_latency_ms;
+    const h=it.health,lat=it.health_latency_ms;
     let rh='';
     if(h==='ok')rh=`<div class="chain-health" style="color:var(--green)">✓${lat>=0?' '+lat+'ms':''}</div>`;
     else if(h==='slow')rh=`<div class="chain-health" style="color:var(--yellow)">🐢${lat>=0?' '+lat+'ms':''}</div>`;
     else if(h==='bad'){rh=`<div class="chain-health" style="color:var(--red)">✗${lat>=0?' '+lat+'ms':''}</div>`;if(it.health_error)rh+=`<div class="chain-err" title="${esc(it.health_error)}">${esc(it.health_error)}</div>`;}
     else if(h==='testing')rh='<div class="chain-health" style="color:var(--text-dim)">…</div>';
     else rh='<div class="chain-health" style="color:var(--text-dim)">-</div>';
-    const conn=i<chain.length-1?'<div class="chain-connector"></div>':'';
-    const vis = (it.is_vision !== false) ? '<span class="badge" style="background:rgba(0,122,255,.15);color:#0a84ff" title="支持原生视觉">👁️视觉</span>' : '';
+    const conn=isLast?'':'<div class="chain-connector"></div>';
+    const vis=(it.is_vision!==false)?'<span class="badge" style="background:rgba(0,122,255,.15);color:#0a84ff" title="支持原生视觉">👁️视觉</span>':'';
     return`<div class="${cls}"><div class="chain-dot"></div><div class="chain-info"><div class="name">${esc(it.name)} ${st}</div><div class="model">${esc(it.model)} ${vis}</div></div><div class="chain-right">${rh}</div></div>${conn}`;
-  }).join('');
+  };
+  let html=normal.map((it,i)=>_chainItem(it,i===normal.length-1&&!bad.length)).join('');
+  if(bad.length){
+    const open=sessionStorage.getItem('chain-bad-open')==='1';
+    html+=`<div class="chain-connector"></div><div style="padding:4px 0"><button class="btn btn-ghost" style="width:100%;justify-content:center;padding:6px 10px;border:1px dashed rgba(255,255,255,.1);border-radius:6px;color:var(--text-dim);font-size:11px;gap:4px" onclick="toggleChainBad(this)">${open?'▲ 收起':'▼ 展开'} ${bad.length} 个异常/冷却端点</button><div id="chain-bad-body" ${open?'':'style="display:none"'}>${bad.map((it,i)=>_chainItem(it,i===bad.length-1)).join('')}</div></div>`;
+  }
+  el.innerHTML=html;
+}
+function toggleChainBad(btn){
+  const body=document.getElementById('chain-bad-body');
+  const nowOpen=body.style.display==='none';
+  body.style.display=nowOpen?'':'none';
+  const cnt=body.querySelectorAll('.chain-item').length;
+  btn.innerHTML=(nowOpen?'▲ 收起':'▼ 展开')+` ${cnt} 个异常/冷却端点`;
+  sessionStorage.setItem('chain-bad-open',nowOpen?'1':'0');
 }
 
 async function runHealthCheck(){toast('正在检测...','info');const r=await api('POST','/api/health-check');if(r.ok){const o=r.results.filter(x=>x.health==='ok').length,s=r.results.filter(x=>x.health==='slow').length,b=r.results.filter(x=>x.health==='bad').length;toast(`✅${o} 🐢${s} ❌${b}`,'success');}refresh();}

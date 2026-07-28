@@ -2,73 +2,13 @@
   ⚡ API Pool 管理面板已启动
   🌐 管理面板访问: http://localhost:5200
   🔗 客户端 Base URL: http://localhost:5200/v1
-  📋 已加载 56 个端点
+  📋 已加载 57 个端点
   🩺 健康检测: 启动时自动检测 + 每 600秒 复检
 
-[12:29:51] [INFO] 健康检测完成: 检测了 42 个端点（15 个中转站）
-[12:30:49] [INFO] 获取模型成功: https://fuhuagoogle.top/v1 (91 个)
-[12:31:18] [INFO] 获取模型成功: https://fuhuagoogle.top/v1 (91 个)
-[12:32:16] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Claude-Opus-4.6)
-[12:32:20] [ERROR] 端点 '浮华云' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[12:32:26] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 5 分钟后
-[12:32:31] [INFO] 收到 API 请求，尝试请求端点 '快乐' (模型: grok-4.5)
-[12:32:33] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Service temporarily unavailable","type":"api_error","param":"","code":null}}
-[12:32:36] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
-[12:32:36] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
-[12:32:36] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
-[12:32:38] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
-[12:32:38] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[12:32:40] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[12:32:42] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: grok-4.5)
-[12:32:43] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[12:32:43] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
-[12:32:43] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[12:32:45] [ERROR] 端点 'luc' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"server_error","param":"","code":null}}
-[12:32:47] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
-[12:32:47] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[12:32:47] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[12:32:47] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[12:33:08] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
-[12:33:08] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
-[12:33:20] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
-[12:33:20] [INFO] 重试请求，尝试端点 '公益' (模型: grok-4.5)
-[12:33:20] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
-[12:33:20] [INFO] 重试请求，尝试端点 '公益' (模型: grok-4.5)
-[12:33:21] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
-[12:33:22] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
-[12:33:23] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:24] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
-[12:33:24] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[12:33:25] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:25] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
-[12:33:26] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[12:33:27] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
-[12:33:27] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
-[12:33:28] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
-[12:33:28] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
-[12:33:28] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
-[12:33:29] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
-[12:33:31] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:31] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[12:33:32] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:32] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[12:33:33] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[12:33:34] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[12:33:36] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:36] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[12:33:37] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:37] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[12:33:37] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[12:33:39] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[12:33:41] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[12:33:41] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
-[12:33:42] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270433420292199458268d9d6MgQaj7MI)","type":"new_api_error"}}
-[12:33:42] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[12:33:42] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
-[12:33:43] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270433434878516748268d9d69lzhaq8h)","type":"new_api_error"}}
-[12:33:45] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
-[12:33:45] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
-[12:33:46] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+[16:40:52] [INFO] 健康检测完成: 检测了 52 个端点（15 个中转站）
+[16:51:13] [INFO] 健康检测完成: 检测了 52 个端点（15 个中转站）
+[16:52:17] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
+[16:52:18] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
 <head><title>404 Not Found</title></head>
 <body>
 <center><h1>404 Not Found</h1></center>
@@ -76,9 +16,31 @@
 </body>
 </html>
 <!-- a padding to disable MSIE and Chrome friendly err
-[12:33:46] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
-[12:33:46] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
-[12:33:47] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+[16:52:21] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[16:52:21] [INFO] 重试请求，尝试端点 '海纳百川' (模型: gpt-5.4)
+[16:52:26] [INFO] 端点 '海纳百川' 请求成功 (延迟: 5129ms)
+[16:52:31] [INFO] 收到 API 请求，尝试请求端点 '海纳百川' (模型: gpt-5.4)
+[16:52:36] [INFO] 端点 '海纳百川' 请求成功 (延迟: 4552ms)
+[17:03:21] [INFO] 健康检测完成: 检测了 52 个端点（15 个中转站）
+[17:16:00] [INFO] 健康检测完成: 检测了 52 个端点（15 个中转站）
+[17:24:10] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
+[17:24:10] [INFO] 收到 API 请求，尝试请求端点 '海纳百川' (模型: gpt-5.4)
+[17:24:19] [INFO] 端点 '海纳百川' 请求成功 (延迟: 9496ms)
+[17:24:19] [INFO] 收到 API 请求，尝试请求端点 '海纳百川' (模型: gpt-5.4)
+[17:24:26] [ERROR] 端点 '海纳百川' 请求失败: 未知错误: 'NoneType' object has no attribute 'strip'
+[17:24:33] [INFO] 端点 '海纳百川' 请求失败但探活通过，视为瞬态故障，原地重试
+[17:24:33] [INFO] 收到 API 请求，尝试请求端点 '海纳百川' (模型: gpt-5.4)
+[17:24:39] [ERROR] 端点 '海纳百川' 请求失败: 未知错误: 'NoneType' object has no attribute 'strip'
+[17:24:44] [WARN] 端点 '海纳百川' 连续 2 次瞬态故障超限，进入冷却
+[17:24:44] [WARN] 端点 '海纳百川' 触发冷却机制，下次可用时间在 15 分钟后
+[17:24:44] [INFO] 重试请求，尝试端点 'pite' (模型: gpt-5.4)
+[17:24:46] [ERROR] 端点 'pite' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[17:24:49] [WARN] 端点 'pite' 触发冷却机制，下次可用时间在 5 分钟后
+[17:24:49] [INFO] 重试请求，尝试端点 '浮华云' (模型: gpt-5.4)
+[17:24:50] [ERROR] 端点 '浮华云' 请求失败: HTTP 502: {"error":{"message":"unknown provider for model gpt-5.4","type":"server_error","param":"","code":"internal_server_error"}}
+[17:25:02] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[17:25:02] [INFO] 重试请求，尝试端点 '公益2' (模型: gpt-5.4)
+[17:25:04] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
 <head><title>404 Not Found</title></head>
 <body>
 <center><h1>404 Not Found</h1></center>
@@ -86,87 +48,12 @@
 </body>
 </html>
 <!-- a padding to disable MSIE and Chrome friendly err
-[12:33:48] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:48] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
-[12:33:50] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[12:33:50] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Service temporarily unavailable","type":"api_error","param":"","code":null}}
-[12:33:54] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
-[12:33:54] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
-[12:33:54] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
-[12:33:56] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
-[12:33:56] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
-[12:33:57] [ERROR] 端点 'luc' 请求失败: HTTP 503: {"error":{"message":"No eligible accounts available. All accounts may be in cooldown or disabled.","type":"server_error","param":"","code":null}}
-[12:34:00] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
-[12:36:55] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[12:37:14] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: glm-4.5-flash)
-[12:37:16] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
-[12:39:47] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[12:51:03] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[13:02:22] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[13:13:46] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[13:26:40] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[13:36:43] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[13:36:44] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[13:36:50] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 30 分钟
-[13:36:50] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
-[13:36:53] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 30 分钟
-[13:36:53] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
-[13:36:54] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[13:36:57] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
-[13:36:59] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[13:37:03] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
-[13:37:07] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟
-[13:37:08] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:08] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
-[13:37:10] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:11] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:13] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟
-[13:37:14] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[13:37:14] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:14] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
-[13:37:15] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:16] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
-[13:37:18] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:18] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: grok-4.5)
-[13:37:18] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:20] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[13:37:20] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[13:37:21] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
-[13:37:23] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
-[13:37:24] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
-[13:37:24] [INFO] 重试请求，尝试端点 '公益' (模型: grok-4.5)
-[13:37:26] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
-[13:37:29] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
-[13:37:29] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
-[13:37:35] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
-[13:37:37] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
-[13:37:37] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
-[13:37:39] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[13:37:41] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
-[13:37:41] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
-[13:37:48] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Upstream request failed","type":"upstream_error","param":"","code":null}}
-[13:37:53] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 30 分钟后
-[13:37:53] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
-[13:37:53] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
-[13:37:54] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
-[13:37:54] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[13:37:57] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[13:38:00] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[13:38:00] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
-[13:38:01] [ERROR] 端点 'luc' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270538015029072368268d9d6mAmUKbiG)","type":"new_api_error"}}
-[13:38:05] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
-[13:38:05] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[13:38:26] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
-[13:38:32] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[13:38:38] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
-[13:38:38] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[13:39:04] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[13:39:08] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[13:39:08] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
-[13:39:10] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270539098698649548268d9d6hj5SndSj)","type":"new_api_error"}}
-[13:39:12] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
-[13:39:12] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
-[13:39:14] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+[17:25:06] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[17:25:08] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: gpt-5.4)
+[17:25:09] [ERROR] 端点 '浮华云' 请求失败: HTTP 502: {"error":{"message":"unknown provider for model gpt-5.4","type":"server_error","param":"","code":"internal_server_error"}}
+[17:25:12] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[17:25:12] [INFO] 重试请求，尝试端点 '公益2' (模型: gpt-5.4)
+[17:25:13] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
 <head><title>404 Not Found</title></head>
 <body>
 <center><h1>404 Not Found</h1></center>
@@ -174,108 +61,20 @@
 </body>
 </html>
 <!-- a padding to disable MSIE and Chrome friendly err
-[13:39:17] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[13:39:17] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[13:39:17] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: glm-4.7-flash)
-[13:39:37] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
-[13:39:38] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[13:39:38] [INFO] 收到 API 请求，尝试请求端点 '翻译' (模型: glm-4.7-flash)
-[13:39:42] [INFO] 端点 '翻译' 请求成功 (延迟: 正常)
-[13:41:23] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[13:41:23] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Kimi-K3)
-[13:44:13] [ERROR] 端点 '浮华云' 请求失败: 连接/超时错误: The read operation timed out
-[13:44:18] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[13:44:18] [INFO] 重试请求，尝试端点 '浮华云' (模型: Kimi-K3)
-[13:44:22] [ERROR] 端点 '浮华云' 请求失败: HTTP 404: {"error":{"message":"No active credentials for provider: qoder","type":"invalid_request_error","param":"","code":"model_not_found"}}
-[13:44:24] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
-[13:44:25] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[13:44:25] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Kimi-K3)
-[13:44:28] [ERROR] 端点 '浮华云' 请求失败: HTTP 404: {"error":{"message":"No active credentials for provider: qoder","type":"invalid_request_error","param":"","code":"model_not_found"}}
-[13:44:40] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
-[13:44:40] [INFO] 重试请求，尝试端点 '浮华云' (模型: Kimi-K3)
-[13:45:15] [ERROR] 端点 '浮华云' 请求失败: HTTP 404: {"error":{"message":"No active credentials for provider: qoder","type":"invalid_request_error","param":"","code":"model_not_found"}}
-[13:45:29] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[13:45:30] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[13:45:30] [INFO] 收到 API 请求，尝试请求端点 '浮华云' (模型: Kimi-K3)
-[13:46:00] [ERROR] 端点 '浮华云' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[13:46:06] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[13:46:06] [INFO] 重试请求，尝试端点 '浮华云' (模型: Kimi-K3)
-[13:46:18] [ERROR] 端点 '浮华云' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[13:46:24] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
-[13:50:55] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[14:03:01] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[14:13:32] [INFO] 中转站 'fuhuagoogle.top': 测活已暂停
-[14:13:33] [INFO] 中转站 'fuhuagoogle.top': 测活已恢复
-[14:13:51] [INFO] 中转站 'muyuan.do': 已更新 4 个端点的配置 (cooldown_minutes)
-[14:14:21] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[14:14:25] [INFO] 中转站 'newapi.kuaileshifu.com': 已更新 1 个端点的配置 (cooldown_minutes)
-[14:25:41] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
-[14:31:14] [WARN] Responses 请求中 1 个工具类型不受支持已忽略: ['tool_search']
-[14:31:19] [WARN] Responses 请求中 4 个工具类型不受支持已忽略: ['namespace', 'namespace', 'namespace', 'web_search']
-[14:31:23] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 15 分钟
-[14:31:23] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
-[14:31:25] [WARN] 端点 '快乐' 冷却过期探活未通过，继续冷却 15 分钟
-[14:31:25] [WARN] 端点 '田文镜' 冷却过期探活未通过，继续冷却 30 分钟
-[14:31:35] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[14:31:36] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[14:31:39] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
-[14:31:39] [WARN] 端点 'luc' 冷却过期探活未通过，继续冷却 30 分钟
-[14:31:49] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟[14:31:49] [WARN] 端点 'ZM' 冷却过期探活未通过，继续冷却 30 分钟
-
-[14:31:52] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
-[14:31:52] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
-[14:31:55] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
-[14:31:56] [WARN] 端点 '公益' 冷却过期探活未通过，继续冷却 15 分钟
-[14:31:56] [WARN] 端点 '公益3' 冷却过期探活未通过，继续冷却 25 分钟
-[14:31:58] [WARN] 端点 '公益4' 冷却过期探活未通过，继续冷却 15 分钟
-[14:32:07] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[14:32:19] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[14:32:19] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
-[14:32:21] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
-[14:32:21] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[14:32:23] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
-[14:32:24] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 30 分钟
-[14:32:25] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
-[14:32:27] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
-[14:32:33] [INFO] 获取模型成功: https://www.0809.one/v1 (30 个)
-[14:32:33] [WARN] 端点 '浮华云' 冷却过期探活未通过，继续冷却 15 分钟
-[14:32:34] [WARN] 端点 '翻译' 冷却过期探活未通过，继续冷却 10 分钟
-[14:32:35] [WARN] 端点 '公益2' 冷却过期探活未通过，继续冷却 15 分钟
-[14:32:35] [INFO] 收到 API 请求，尝试请求端点 '公益' (模型: grok-4.5)
-[14:32:37] [ERROR] 端点 '公益' 请求失败: HTTP 401: {"code":"INVALID_API_KEY","message":"Invalid API key"} (auth error)
-[14:32:39] [WARN] 端点 '公益' 触发冷却机制，下次可用时间在 15 分钟后
-[14:32:39] [INFO] 重试请求，尝试端点 '快乐' (模型: grok-4.5)
-[14:32:45] [ERROR] 端点 '快乐' 请求失败: HTTP 424: {"error":{"message":"Upstream request failed","type":"upstream_error","param":"","code":null}}
-[14:32:53] [WARN] 端点 '快乐' 触发冷却机制，下次可用时间在 15 分钟后
-[14:32:53] [INFO] 重试请求，尝试端点 '公益4' (模型: grok-4.5)
-[14:32:55] [ERROR] 端点 '公益4' 请求失败: HTTP 401: {"code":"API_KEY_DISABLED","message":"API key is disabled"} (auth error)
-[14:32:59] [WARN] 端点 '公益4' 触发冷却机制，下次可用时间在 15 分钟后
-[14:32:59] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[14:33:02] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[14:33:06] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 15 分钟后
-[14:33:06] [INFO] 重试请求，尝试端点 '公益3' (模型: grok-4.5)
-[14:33:06] [ERROR] 端点 '公益3' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
-[14:33:08] [WARN] 端点 '公益3' 触发冷却机制，下次可用时间在 25 分钟后
-[14:33:08] [INFO] 重试请求，尝试端点 '田文镜' (模型: grok-4.5)
-[14:33:08] [ERROR] 端点 '田文镜' 请求失败: 连接/超时错误: <urlopen error [Errno 11001] getaddrinfo failed>
-[14:33:10] [WARN] 端点 '田文镜' 触发冷却机制，下次可用时间在 30 分钟后
-[14:33:10] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[14:33:12] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[14:33:16] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[14:33:16] [INFO] 重试请求，尝试端点 'luc' (模型: grok-4.5)
-[14:33:19] [ERROR] 端点 'luc' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270633188794088038268d9d6lnzUXEi6)","type":"new_api_error"}}
-[14:33:23] [WARN] 端点 'luc' 触发冷却机制，下次可用时间在 30 分钟后
-[14:33:23] [INFO] 重试请求，尝试端点 'ZM' (模型: grok-4.5)
-[14:33:44] [ERROR] 端点 'ZM' 请求失败: 连接/超时错误: <urlopen error [WinError 10060] 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。>
-[14:33:56] [WARN] 端点 'ZM' 触发冷却机制，下次可用时间在 30 分钟后
-[14:33:56] [INFO] 重试请求，尝试端点 '浮华云' (模型: grok-4.5)
-[14:35:12] [ERROR] 端点 '浮华云' 请求失败: HTTP 402: {"error":{"message":"You have run out of credits or need a Grok subscription. Add credits at https://***.com/?_s=*** or upgrade at https://***.com/***","type":"bad_response_status_code","param":"","co
-[14:35:21] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
-[14:35:21] [INFO] 重试请求，尝试端点 '翻译' (模型: grok-4.5)
-[14:35:22] [ERROR] 端点 '翻译' 请求失败: HTTP 503: {"error":{"code":"model_not_found","message":"No available channel for model grok-4.5 under group default (distributor) (request id: 202607270635225292607538268d9d6h9cesZUM)","type":"new_api_error"}}
-[14:35:25] [WARN] 端点 '翻译' 触发冷却机制，下次可用时间在 10 分钟后
-[14:35:25] [INFO] 重试请求，尝试端点 '公益2' (模型: grok-4.5)
-[14:35:27] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+[17:25:25] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[17:25:25] [INFO] 重试请求，尝试端点 '海纳百川' (模型: gpt-5.4)
+[17:25:30] [ERROR] 端点 '海纳百川' 请求失败: 未知错误: 'NoneType' object has no attribute 'strip'
+[17:25:34] [WARN] 端点 '海纳百川' 连续 3 次瞬态故障超限，进入冷却
+[17:25:34] [WARN] 端点 '海纳百川' 触发冷却机制，下次可用时间在 15 分钟后
+[17:25:34] [INFO] 重试请求，尝试端点 'pite' (模型: gpt-5.4)
+[17:25:35] [ERROR] 端点 'pite' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[17:25:38] [WARN] 端点 'pite' 触发冷却机制，下次可用时间在 5 分钟后
+[17:25:42] [INFO] 收到 API 请求，尝试请求端点 '海纳百川' (模型: gpt-5.4)
+[17:25:46] [ERROR] 端点 '海纳百川' 请求失败: 未知错误: 'NoneType' object has no attribute 'strip'
+[17:25:50] [WARN] 端点 '海纳百川' 连续 4 次瞬态故障超限，进入冷却
+[17:25:50] [WARN] 端点 '海纳百川' 触发冷却机制，下次可用时间在 15 分钟后
+[17:25:50] [INFO] 重试请求，尝试端点 '公益2' (模型: gpt-5.4)
+[17:25:52] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
 <head><title>404 Not Found</title></head>
 <body>
 <center><h1>404 Not Found</h1></center>
@@ -283,5 +82,30 @@
 </body>
 </html>
 <!-- a padding to disable MSIE and Chrome friendly err
-[14:35:30] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
-[14:38:21] [INFO] 健康检测完成: 检测了 46 个端点（15 个中转站）
+[17:25:55] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[17:25:55] [INFO] 重试请求，尝试端点 'pite' (模型: gpt-5.4)
+[17:25:56] [ERROR] 端点 'pite' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[17:25:59] [WARN] 端点 'pite' 触发冷却机制，下次可用时间在 5 分钟后
+[17:25:59] [INFO] 重试请求，尝试端点 '浮华云' (模型: gpt-5.4)
+[17:26:00] [ERROR] 端点 '浮华云' 请求失败: HTTP 502: {"error":{"message":"unknown provider for model gpt-5.4","type":"server_error","param":"","code":"internal_server_error"}}
+[17:26:02] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
+[17:26:10] [INFO] 收到 API 请求，尝试请求端点 '公益2' (模型: gpt-5.4)
+[17:26:11] [ERROR] 端点 '公益2' 请求失败: HTTP 404: <html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+<!-- a padding to disable MSIE and Chrome friendly err
+[17:26:14] [WARN] 端点 '公益2' 触发冷却机制，下次可用时间在 15 分钟后
+[17:26:14] [INFO] 重试请求，尝试端点 '海纳百川' (模型: gpt-5.4)
+[17:26:20] [ERROR] 端点 '海纳百川' 请求失败: 未知错误: 'NoneType' object has no attribute 'strip'
+[17:26:24] [WARN] 端点 '海纳百川' 连续 5 次瞬态故障超限，进入冷却
+[17:26:24] [WARN] 端点 '海纳百川' 触发冷却机制，下次可用时间在 15 分钟后
+[17:26:24] [INFO] 重试请求，尝试端点 'pite' (模型: gpt-5.4)
+[17:26:26] [ERROR] 端点 'pite' 请求失败: 未知错误: Expecting value: line 1 column 1 (char 0)
+[17:26:28] [WARN] 端点 'pite' 触发冷却机制，下次可用时间在 5 分钟后
+[17:26:28] [INFO] 重试请求，尝试端点 '浮华云' (模型: gpt-5.4)
+[17:26:30] [ERROR] 端点 '浮华云' 请求失败: HTTP 502: {"error":{"message":"unknown provider for model gpt-5.4","type":"server_error","param":"","code":"internal_server_error"}}
+[17:26:42] [WARN] 端点 '浮华云' 触发冷却机制，下次可用时间在 30 分钟后
