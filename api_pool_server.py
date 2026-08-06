@@ -2,7 +2,7 @@
 API Pool — 聚合 API 自动切换模块（GUI 版）
 
 启动: python api_pool_server.py
-访问: http://localhost:5200
+访问: http://localhost:5100
 """
 
 import os
@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
 from datetime import datetime, timedelta
 from collections import deque
+import re
 
 LATENCY_OK_MAX = 2000     
 LATENCY_SLOW_MAX = 5000   
@@ -510,6 +511,13 @@ def station_key(base_url):
         return (base_url or "").strip().lower()
 
 
+def canon_model_key(name):
+    """模型名归一化键：忽略大小写与 . - _ / 空格等分隔符差异，
+    用于把同一模型的不同写法（如 claude-opus-4.6 / Claude-Opus-4.6 / claude-opus-4-6）
+    视为同一个模型。仅合并"写法差异"，字母数字序列不同的模型（如带 thinking、带组织前缀）仍视为不同。"""
+    return re.sub(r'[^a-z0-9]+', '', (name or '').strip().lower())
+
+
 class AllEndpointsFailed(Exception):
     def __init__(self, errors: list):
         self.errors = errors
@@ -545,6 +553,9 @@ class APIPool:
         self._list_cache_ts = 0
         self._chain_cache = None
         self._chain_cache_ts = 0
+        # 每模型"首选端点"：{归一化模型键: 上次成功的端点ID}，实现粘连路由(sticky)，
+        # 避免每次请求都在多个正常端点间来回跳；端点失败/降级后会自动掉出健康层、改选其他。
+        self._model_preferred = {}
         if endpoints:
             for ep in endpoints:
                 self.add_endpoint(ep)
@@ -1047,7 +1058,8 @@ class APIPool:
         base = [ep for ep in self._endpoints if not self.is_station_connect_paused(ep)]
         target_model = (requested_model or "").strip()
         if target_model:
-            base = [ep for ep in base if (ep.model or "").strip() == target_model]
+            tk = canon_model_key(target_model)
+            base = [ep for ep in base if canon_model_key(ep.model) == tk]
         available = [ep for ep in base if ep.enabled and ep.in_pool and not self._is_in_cooldown(ep) and not self._is_quota_exceeded(ep) and not self._is_rpm_limited(ep)]
         if available:
             return available
@@ -1057,25 +1069,45 @@ class APIPool:
 
     def _pick_best(self, active):
         """
-        在同一优先级层内按历史成功率加权随机选择，
-        而非总是选第一个——避免所有流量都打到单一端点。
-        权重公式：w = successes / (successes + failures)，
-        新端点（调用数 < 10）默认按 70% 成功率估算；
-        健康状态 ok/slow 小幅加成，bad/unknown 降权。
+        选端点策略（三级）：
+          1. 优先级层（数字越小越高）
+          2. 健康状态层：ok > slow > unknown > bad，同优先级内只在最优健康层竞争
+          3. 成功率加权随机：同层内按历史成功率 + 健康微调加权随机
+        效果：有健康端点时绝不把流量漏给坏端点；全部降级时再往下层顺延。
         """
         available = [ep for ep in active if not self._is_in_cooldown(ep)]
         if not available:
             # 全部冷却中，选最快恢复的
             return min(active, key=lambda e: e._cooldown_until) if active else None
 
-        # 只在最高优先级层内竞争（数字越小优先级越高）
+        # 第一级：只在最高优先级层内竞争（数字越小优先级越高）
         min_priority = min(ep.priority for ep in available)
         top_tier = [ep for ep in available if ep.priority == min_priority]
 
         if len(top_tier) == 1:
             return top_tier[0]
 
-        # 计算权重
+        # 第二级：健康状态子层 —— ok=0 > slow=1 > unknown=2 > bad=3
+        # 只在最优健康层内竞争，杜绝把流量漏给坏端点
+        _hr = {"ok": 0, "slow": 1, "unknown": 2, "bad": 3}
+        best_health = min(_hr.get(ep._health or "unknown", 2) for ep in top_tier)
+        top_tier = [ep for ep in top_tier if _hr.get(ep._health or "unknown", 2) == best_health]
+
+        if len(top_tier) == 1:
+            return top_tier[0]
+
+        # 第二·五级：粘连(sticky) —— 优先复用该模型上次成功的端点
+        # 条件：同模型请求（top_tier 内所有端点归一化模型名相同）且首选端点仍在健康层内
+        _models_in_tier = {canon_model_key(ep.model) for ep in top_tier}
+        if len(_models_in_tier) == 1:
+            mk = next(iter(_models_in_tier))
+            preferred_id = self._model_preferred.get(mk)
+            if preferred_id:
+                preferred = next((ep for ep in top_tier if ep.id == preferred_id), None)
+                if preferred:
+                    return preferred
+
+        # 第三级：同层内按历史成功率加权随机
         weights = []
         for ep in top_tier:
             total = ep._total_calls + ep._total_failures
@@ -1083,7 +1115,7 @@ class APIPool:
                 w = 0.7   # 新端点：假设70%成功率，给机会试探
             else:
                 w = ep._total_calls / total
-            # 健康状态修正
+            # 同层内健康状态相同，保留小幅微调以区分边缘状态
             h = ep._health
             if h == "ok":
                 w = min(1.0, w * 1.15)
@@ -1127,6 +1159,10 @@ class APIPool:
         ep._last_error = ""
         self._clear_cooldown(ep)
         self._invalidate_cache()
+        # 粘连路由：记录该模型最近成功的端点，供 _pick_best 优先复用
+        mk = canon_model_key(ep.model)
+        if mk:
+            self._model_preferred[mk] = ep.id
         # 记录实际请求延迟（用于性能可视化）
         if latency_ms is not None and latency_ms > 0:
             ep._latency_samples.append(latency_ms)
@@ -1161,6 +1197,15 @@ class APIPool:
         alias_name = requested_model
         requested_model = self.resolve_model_alias(requested_model)
         target_model = requested_model
+
+        # 请求缓存：非流式且无 tools 时检查缓存
+        ep = extra_payload or {}
+        _use_cache = not ep.get("stream") and not ep.get("tools") and not ep.get("_anthropic_native_body")
+        if _use_cache:
+            cached = request_cache.get(messages, target_model or alias_name, ep)
+            if cached is not None:
+                return cached
+
         active = self._active_endpoints(target_model)
         if not active:
             if target_model:
@@ -1255,6 +1300,9 @@ class APIPool:
                     self._on_success(ep, result, target_model, latency_ms=_call_ms)
                 sys_log(f"端点 '{ep.name}' 请求成功 (延迟: {_call_ms}ms)", "INFO")
                 if return_endpoint: return result, ep
+                # 写入请求缓存（只缓存非 native stream 结果）
+                if _use_cache and isinstance(result, dict) and "_anthropic_native_stream" not in result:
+                    request_cache.set(messages, target_model or alias_name, extra_payload or {}, result)
                 return result
             errors.append(f"[{ep.name}] {error}")
             sys_log(f"端点 '{ep.name}' 请求失败: {error}", "ERROR")
@@ -1287,6 +1335,158 @@ class APIPool:
             raise ModelRouteError(target_model, f"模型 {target_model} 的所有同名端点均不可用: {errors}")
         raise AllEndpointsFailed(errors)
 
+    def forward_request(self, path_suffix, body, timeout=None, return_raw=False):
+        """
+        透传非 chat 类请求（embeddings、images/generations 等）到池内端点。
+        选端点逻辑与 chat() 相同（优先级+加权随机），支持故障转移。
+        path_suffix 为相对于 base_url 的路径，如 "embeddings" / "images/generations"。
+        return_raw=True 时：若响应 Content-Type 为 audio/* 等二进制类型，
+        返回 (bytes, content_type_str) 而非解析后的 JSON dict。
+        """
+        self._cleanup_expired_cooldowns()
+        requested_model = (body.get("model") or "").strip()
+        if timeout is None:
+            timeout = 120
+
+        active = self._active_endpoints(requested_model or None)
+        if not active:
+            raise AllEndpointsFailed(["无可用端点"])
+
+        errors = []
+        attempted = set()
+
+        while True:
+            candidates = [e for e in active if e.id not in attempted]
+            if not candidates:
+                break
+            ep = self._pick_best(candidates)
+            if ep is None:
+                break
+            attempted.add(ep.id)
+
+            # 构造目标 URL
+            url = ep.base_url.rstrip("/") + "/" + path_suffix.lstrip("/")
+
+            # 若端点配置了上游模型名，替换请求中的 model 字段
+            send_body = dict(body)
+            upstream = getattr(ep, "upstream_model", None) or ep.model
+            if upstream:
+                send_body["model"] = upstream
+
+            data = json.dumps(send_body).encode("utf-8")
+            req = urllib.request.Request(url, data=data, method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("User-Agent", "Mozilla/5.0")
+            safe_key = ep.api_key.encode("ascii", "ignore").decode("ascii").strip()
+            req.add_header("Authorization", f"Bearer {safe_key}")
+            for k, v in ep.extra_headers.items():
+                req.add_header(k, v)
+
+            t0 = time.time()
+            try:
+                if getattr(ep, "use_proxy", True) is False:
+                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                    resp = opener.open(req, timeout=timeout)
+                else:
+                    resp = urllib.request.urlopen(req, timeout=timeout)
+
+                raw = resp.read()
+                resp_ctype = (resp.headers.get("Content-Type") or "application/json").split(";")[0].strip().lower()
+                latency_ms = (time.time() - t0) * 1000
+                self._on_success(ep, latency_ms=latency_ms)
+                sys_log(f"[{path_suffix}] 端点 '{ep.name}' 成功，耗时 {latency_ms:.0f}ms", "INFO")
+                # 二进制响应（audio/* 等）直接返回原始字节
+                if return_raw and (resp_ctype.startswith("audio/") or resp_ctype == "application/octet-stream"):
+                    return raw, resp_ctype
+                return json.loads(raw.decode("utf-8"))
+
+            except urllib.error.HTTPError as e:
+                status = e.code
+                try:
+                    err_body = json.loads(e.read().decode("utf-8"))
+                    err_msg = err_body.get("error", {}).get("message") or str(e)
+                except Exception:
+                    err_msg = str(e)
+                msg = f"{ep.name}: HTTP {status} {err_msg}"
+                errors.append(msg)
+                sys_log(f"[{path_suffix}] 端点 '{ep.name}' 返回 {status}，尝试下一个", "WARN")
+                with self._lock:
+                    self._rotate(ep, err_msg)
+            except Exception as e:
+                msg = f"{ep.name}: {e}"
+                errors.append(msg)
+                sys_log(f"[{path_suffix}] 端点 '{ep.name}' 异常: {e}，尝试下一个", "WARN")
+                with self._lock:
+                    self._rotate(ep, str(e))
+
+            active = self._active_endpoints(requested_model or None)
+
+        raise AllEndpointsFailed(errors)
+
+    def forward_raw(self, raw_body, content_type, path_suffix, timeout=None):
+        """
+        透传原始字节请求（multipart/form-data 等非 JSON 请求），响应返回 JSON。
+        用于 audio/transcriptions 等接口。
+        """
+        self._cleanup_expired_cooldowns()
+        if timeout is None:
+            timeout = 120
+
+        active = self._active_endpoints()
+        if not active:
+            raise AllEndpointsFailed(["无可用端点"])
+
+        errors = []
+        attempted = set()
+
+        while True:
+            candidates = [e for e in active if e.id not in attempted]
+            if not candidates:
+                break
+            ep = self._pick_best(candidates)
+            if ep is None:
+                break
+            attempted.add(ep.id)
+
+            url = ep.base_url.rstrip("/") + "/" + path_suffix.lstrip("/")
+            req = urllib.request.Request(url, data=raw_body, method="POST")
+            req.add_header("Content-Type", content_type)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            safe_key = ep.api_key.encode("ascii", "ignore").decode("ascii").strip()
+            req.add_header("Authorization", f"Bearer {safe_key}")
+            for k, v in ep.extra_headers.items():
+                req.add_header(k, v)
+
+            t0 = time.time()
+            try:
+                if getattr(ep, "use_proxy", True) is False:
+                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                    resp = opener.open(req, timeout=timeout)
+                else:
+                    resp = urllib.request.urlopen(req, timeout=timeout)
+                raw_resp = resp.read()
+                latency_ms = (time.time() - t0) * 1000
+                self._on_success(ep, latency_ms=latency_ms)
+                sys_log(f"[{path_suffix}] 端点 '{ep.name}' 成功，耗时 {latency_ms:.0f}ms", "INFO")
+                return json.loads(raw_resp.decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                try:
+                    err_body = json.loads(e.read().decode("utf-8"))
+                    err_msg = err_body.get("error", {}).get("message") or str(e)
+                except Exception:
+                    err_msg = str(e)
+                errors.append(f"{ep.name}: HTTP {e.code} {err_msg}")
+                with self._lock:
+                    self._rotate(ep, err_msg)
+            except Exception as e:
+                errors.append(f"{ep.name}: {e}")
+                with self._lock:
+                    self._rotate(ep, str(e))
+
+            active = self._active_endpoints()
+
+        raise AllEndpointsFailed(errors)
+
     def _try_endpoint(self, ep, payload, timeout, log_usage=True, force_no_retry=False):
         req_t0 = time.time()
         prompt_text_to_log = extract_prompt_text(payload) if log_usage and not ep.name.startswith("test_") else ""
@@ -1294,28 +1494,38 @@ class APIPool:
         
         if is_anthropic:
             url = ep.base_url.rstrip("/") + "/messages"
-            anthropic_payload = {
-                "model": payload.get("model", ep.model),
-                "max_tokens": payload.get("max_tokens", 4096),
-            }
-            if "temperature" in payload: anthropic_payload["temperature"] = payload["temperature"]
-            if "top_p" in payload: anthropic_payload["top_p"] = payload["top_p"]
-            if "stream" in payload: anthropic_payload["stream"] = payload["stream"]
 
-            # OpenAI tools -> Anthropic tools
-            if payload.get("tools"):
-                a_tools = []
-                for t in payload["tools"]:
-                    fn = t.get("function", {}) if isinstance(t, dict) else {}
-                    if not fn.get("name"):
-                        continue
-                    a_tools.append({
-                        "name": fn["name"],
-                        "description": fn.get("description", ""),
-                        "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
-                    })
-                if a_tools:
-                    anthropic_payload["tools"] = a_tools
+            # 如果有原始 Anthropic body（来自 /v1/messages 的 thinking/cache_control 请求），
+            # 直接使用，仅更新 model 字段，跳过来回格式转换
+            native_body = payload.get("_anthropic_native_body")
+            if native_body:
+                anthropic_payload = {k: v for k, v in native_body.items() if k != "_anthropic_native_body"}
+                anthropic_payload["model"] = payload.get("model") or ep.model or native_body.get("model", "")
+                if "stream" in payload:
+                    anthropic_payload["stream"] = payload["stream"]
+            else:
+                anthropic_payload = {
+                    "model": payload.get("model", ep.model),
+                    "max_tokens": payload.get("max_tokens", 4096),
+                }
+                if "temperature" in payload: anthropic_payload["temperature"] = payload["temperature"]
+                if "top_p" in payload: anthropic_payload["top_p"] = payload["top_p"]
+                if "stream" in payload: anthropic_payload["stream"] = payload["stream"]
+
+                # OpenAI tools -> Anthropic tools
+                if payload.get("tools"):
+                    a_tools = []
+                    for t in payload["tools"]:
+                        fn = t.get("function", {}) if isinstance(t, dict) else {}
+                        if not fn.get("name"):
+                            continue
+                        a_tools.append({
+                            "name": fn["name"],
+                            "description": fn.get("description", ""),
+                            "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+                        })
+                    if a_tools:
+                        anthropic_payload["tools"] = a_tools
             tc = payload.get("tool_choice")
             if tc == "none":
                 anthropic_payload.pop("tools", None)
@@ -1420,6 +1630,14 @@ class APIPool:
                 req.add_header("x-api-key", safe_api_key)
                 req.add_header("Authorization", f"Bearer {safe_api_key}")
                 req.add_header("anthropic-version", "2023-06-01")
+                # 按需加 beta 头
+                betas = []
+                if native_body and native_body.get("thinking"):
+                    betas.append("interleaved-thinking-2025-05-14")
+                if native_body and _has_cache_control_in_payload(native_body):
+                    betas.append("prompt-caching-2024-07-31")
+                if betas:
+                    req.add_header("anthropic-beta", ",".join(betas))
             else:
                 safe_api_key = ep.api_key.encode('ascii', 'ignore').decode('ascii').strip()
                 req.add_header("Authorization", f"Bearer {safe_api_key}")
@@ -1435,6 +1653,20 @@ class APIPool:
                     resp = urllib.request.urlopen(req, timeout=timeout)
                 
                 if is_stream:
+                    # native_body + Anthropic 端点：原样透传 Anthropic SSE（保留 thinking、caching 事件）
+                    if is_anthropic and native_body:
+                        def native_anthropic_stream_gen(r=resp, t0=req_t0, e=ep):
+                            try:
+                                for line in r:
+                                    yield line
+                            except Exception:
+                                pass
+                            finally:
+                                latency = (time.time() - t0) * 1000
+                                e._on_success_flag = True
+                                r.close()
+                        self._on_success(ep, latency_ms=(time.time() - req_t0) * 1000)
+                        return {"_anthropic_native_stream": native_anthropic_stream_gen()}, ""
                     def stream_generator():
                         stream_id = f"chatcmpl-{int(time.time()*1000)}"
                         final_prompt_tokens = 0
@@ -1598,12 +1830,21 @@ class APIPool:
                             resp.close()
                     return stream_generator(), ""
                 else:
-                    body = json.loads(resp.read().decode("utf-8"))
+                    raw_body = resp.read().decode("utf-8")
+                    _ctype = resp.headers.get("Content-Type", "") if hasattr(resp, "headers") else ""
+                    if "text/event-stream" in _ctype or raw_body.lstrip().startswith("data:"):
+                        # 上游无视 stream=false 强制返回 SSE，聚合成普通 JSON
+                        body = self._aggregate_sse_to_completion(raw_body, ep)
+                    else:
+                        body = json.loads(raw_body)
                     if is_anthropic:
                         reply = ""
                         out_tool_calls = []
+                        thinking_blocks = []
                         for c in body.get("content", []):
                             if c.get("type") == "text": reply += c.get("text", "")
+                            elif c.get("type") == "thinking":
+                                thinking_blocks.append({"type": "thinking", "thinking": c.get("thinking", "")})
                             elif c.get("type") == "tool_use":
                                 out_tool_calls.append({
                                     "id": c.get("id") or f"call_{secrets.token_hex(8)}",
@@ -1630,7 +1871,7 @@ class APIPool:
                         out_message = {"role": "assistant", "content": reply.strip()}
                         if out_tool_calls:
                             out_message["tool_calls"] = out_tool_calls
-                        return {
+                        result_dict = {
                             "id": f"chatcmpl-{int(time.time()*1000)}",
                             "object": "chat.completion",
                             "created": int(time.time()),
@@ -1646,7 +1887,10 @@ class APIPool:
                                 "total_tokens": tot,
                                 "prompt_tokens_details": {"cached_tokens": cached} if cached else {},
                             },
-                        }, ""
+                        }
+                        if thinking_blocks:
+                            result_dict["_anthropic_thinking_blocks"] = thinking_blocks
+                        return result_dict, ""
                     else:
                         u = body.get("usage", {})
                         if u:
@@ -1685,6 +1929,56 @@ class APIPool:
             except Exception as e:
                 return None, f"未知错误: {e}"
         return None, "重试次数用尽"
+
+    @staticmethod
+    def _aggregate_sse_to_completion(raw, ep):
+        """上游忽略 stream=false、强制返回 SSE 时，把流式块聚合成标准 chat.completion JSON"""
+        content_parts = []
+        reasoning_parts = []
+        tool_calls = {}
+        usage = {}
+        finish_reason = None
+        model = ""
+        comp_id = f"chatcmpl-{int(time.time()*1000)}"
+        created = int(time.time())
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                chunk = json.loads(data)
+            except Exception:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("id"): comp_id = chunk["id"]
+            if chunk.get("created"): created = chunk["created"]
+            if chunk.get("model"): model = chunk["model"]
+            if isinstance(chunk.get("usage"), dict): usage = chunk["usage"]
+            for ch in chunk.get("choices") or []:
+                if ch.get("finish_reason"): finish_reason = ch["finish_reason"]
+                delta = ch.get("delta") or ch.get("message") or {}
+                if delta.get("content"): content_parts.append(delta["content"])
+                if delta.get("reasoning_content"): reasoning_parts.append(delta["reasoning_content"])
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = tool_calls.setdefault(idx, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                    if tc.get("id"): slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"): slot["function"]["name"] += fn["name"]
+                    if fn.get("arguments"): slot["function"]["arguments"] += fn["arguments"]
+        message = {"role": "assistant", "content": "".join(content_parts)}
+        if reasoning_parts: message["reasoning_content"] = "".join(reasoning_parts)
+        if tool_calls: message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+        return {
+            "id": comp_id, "object": "chat.completion", "created": created,
+            "model": model or getattr(ep, "model", ""),
+            "choices": [{"index": 0, "message": message, "finish_reason": finish_reason or "stop"}],
+            "usage": usage,
+        }
 
     def _model_url_candidates(self, base_url):
         raw = (base_url or "").strip().rstrip("/")
@@ -1830,8 +2124,24 @@ class SecurityManager:
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                if data.get("admin_username") and data.get("password") and data.get("client_api_key_hash"):
-                    return data
+                if data.get("admin_username") and data.get("password"):
+                    # 自动迁移：旧单 key 格式 → 新数组格式
+                    if data.get("client_api_key_hash") and "client_api_keys" not in data:
+                        data["client_api_keys"] = [{
+                            "id": "default",
+                            "name": "默认 Key",
+                            "hash": data.get("client_api_key_hash", ""),
+                            "hint": data.get("client_api_key_hint", ""),
+                            "plain": data.get("client_api_key_plain", ""),
+                            "enabled": True,
+                        }]
+                        data.pop("client_api_key_hash", None)
+                        data.pop("client_api_key_hint", None)
+                        data.pop("client_api_key_plain", None)
+                        with open(self.config_path, "w", encoding="utf-8") as f:
+                            json.dump(data, f, ensure_ascii=False, indent=2)
+                    if data.get("client_api_keys"):
+                        return data
             except Exception:
                 pass
 
@@ -1841,9 +2151,14 @@ class SecurityManager:
         data = {
             "admin_username": username,
             "password": self._hash_password(password),
-            "client_api_key_hash": self._hash_api_key(client_api_key),
-            "client_api_key_hint": self._key_hint(client_api_key),
-            "client_api_key_plain": client_api_key,
+            "client_api_keys": [{
+                "id": "default",
+                "name": "默认 Key",
+                "hash": self._hash_api_key(client_api_key),
+                "hint": self._key_hint(client_api_key),
+                "plain": client_api_key,
+                "enabled": True,
+            }],
         }
         self._save(data)
         self.bootstrap = {
@@ -1888,10 +2203,12 @@ class SecurityManager:
         return f"{api_key[:8]}...{api_key[-6:]}"
 
     def public_config(self):
+        keys = self.config.get("client_api_keys", [])
+        first = keys[0] if keys else {}
         return {
             "username": self.config.get("admin_username", "admin"),
-            "client_api_key_hint": self.config.get("client_api_key_hint", ""),
-            "client_api_key_available": bool(self.config.get("client_api_key_plain")),
+            "client_api_key_hint": first.get("hint", ""),
+            "client_api_key_available": bool(first.get("plain")),
         }
 
     def verify_login(self, username, password):
@@ -1943,7 +2260,61 @@ class SecurityManager:
             api_key = headers.get("X-API-Key", "").strip()
         if not api_key:
             return False
-        return hmac.compare_digest(self._hash_api_key(api_key), self.config.get("client_api_key_hash", ""))
+        key_hash = self._hash_api_key(api_key)
+        for k in self.config.get("client_api_keys", []):
+            if k.get("enabled", True) and hmac.compare_digest(key_hash, k.get("hash", "")):
+                return True
+        return False
+
+    def list_client_keys(self):
+        """返回所有 key 列表（不含明文）"""
+        return [
+            {"id": k["id"], "name": k.get("name", ""), "hint": k.get("hint", ""), "enabled": k.get("enabled", True)}
+            for k in self.config.get("client_api_keys", [])
+        ]
+
+    def add_client_key(self, name):
+        """创建一个新 Key，返回 (key_id, plain_key, hint)"""
+        name = (name or "新 Key").strip()[:64]
+        new_key = self.generate_client_api_key_value()
+        key_id = secrets.token_hex(8)
+        entry = {
+            "id": key_id,
+            "name": name,
+            "hash": self._hash_api_key(new_key),
+            "hint": self._key_hint(new_key),
+            "plain": new_key,
+            "enabled": True,
+        }
+        with self._lock:
+            keys = self.config.setdefault("client_api_keys", [])
+            keys.append(entry)
+            self._save()
+        return key_id, new_key, entry["hint"]
+
+    def delete_client_key(self, key_id):
+        """删除指定 Key，至少保留一个"""
+        with self._lock:
+            keys = self.config.get("client_api_keys", [])
+            if len(keys) <= 1:
+                return False, "至少保留一个 Key"
+            new_keys = [k for k in keys if k["id"] != key_id]
+            if len(new_keys) == len(keys):
+                return False, "Key 不存在"
+            self.config["client_api_keys"] = new_keys
+            self._save()
+        return True, ""
+
+    def toggle_client_key(self, key_id, enabled):
+        """启用或禁用指定 Key"""
+        with self._lock:
+            keys = self.config.get("client_api_keys", [])
+            for k in keys:
+                if k["id"] == key_id:
+                    k["enabled"] = bool(enabled)
+                    self._save()
+                    return True, ""
+        return False, "Key 不存在"
 
     def update_admin(self, current_password, username=None, password=None):
         if not self._verify_password(current_password or ""):
@@ -1960,25 +2331,31 @@ class SecurityManager:
         return True, ""
 
     def set_client_api_key(self, api_key):
+        """更新第一个 Key 的值（向后兼容旧接口）"""
         api_key = (api_key or "").strip()
         if len(api_key) < 12:
             return False, "API Key 至少 12 位", ""
-        self.config["client_api_key_hash"] = self._hash_api_key(api_key)
-        self.config["client_api_key_hint"] = self._key_hint(api_key)
-        self.config["client_api_key_plain"] = api_key
-        self._save()
-        return True, "", self.config["client_api_key_hint"]
+        with self._lock:
+            keys = self.config.setdefault("client_api_keys", [])
+            if not keys:
+                keys.append({"id": "default", "name": "默认 Key", "enabled": True})
+            keys[0]["hash"] = self._hash_api_key(api_key)
+            keys[0]["hint"] = self._key_hint(api_key)
+            keys[0]["plain"] = api_key
+            self._save()
+        return True, "", keys[0]["hint"]
 
     def generate_client_api_key_value(self):
         return "sk-apipool-" + secrets.token_urlsafe(32)
 
     def rotate_client_api_key(self):
         api_key = self.generate_client_api_key_value()
-        self.set_client_api_key(api_key)
-        return api_key, self.config["client_api_key_hint"]
+        ok, err, hint = self.set_client_api_key(api_key)
+        return api_key, hint
 
     def get_client_api_key(self):
-        return self.config.get("client_api_key_plain", "")
+        keys = self.config.get("client_api_keys", [])
+        return keys[0].get("plain", "") if keys else ""
 
 security_manager = SecurityManager()
 
@@ -2011,12 +2388,21 @@ def load_station_settings():
         pass
     return {}
 
+def load_expose_upstream_models():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return bool(json.load(f).get("expose_upstream_models", False))
+    except Exception:
+        return False
+
 def save_config(endpoints_data, station_settings=None, model_aliases=None):
     data = {"api_endpoints": endpoints_data}
     if station_settings:
         data["station_settings"] = station_settings
     if model_aliases:
         data["model_aliases"] = model_aliases
+    # 是否把上游全部模型对外展示到 /v1/models（默认关闭，只暴露已选模型+别名）
+    data["expose_upstream_models"] = bool(globals().get("EXPOSE_UPSTREAM_MODELS", False))
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -2095,9 +2481,118 @@ for ep_data in load_config(): pool.add_endpoint(ep_data)
 pool.station_settings = load_station_settings()
 pool.model_aliases = load_model_aliases()
 
+# 是否把上游全部模型对外展示到 /v1/models（默认关闭）
+EXPOSE_UPSTREAM_MODELS = load_expose_upstream_models()
+
+def set_expose_upstream_models(val):
+    global EXPOSE_UPSTREAM_MODELS
+    EXPOSE_UPSTREAM_MODELS = bool(val)
+
 _health_thread = threading.Thread(target=_health_check_loop, daemon=True)
 _health_thread.start()
 threading.Thread(target=pool.check_all_health, daemon=True).start()
+
+# ── Phase 2: 动态 /v1/models 后台刷新 ──────────────────────────────────────
+_dyn_models_cache: dict = {}   # {model_id: created_ts}
+_dyn_models_lock = threading.Lock()
+_DYN_MODELS_REFRESH_INTERVAL = 600  # 10 分钟
+
+def _refresh_dynamic_models():
+    """后台线程：定期从所有端点拉取并缓存模型列表"""
+    while True:
+        try:
+            if not EXPOSE_UPSTREAM_MODELS:
+                # 未开启对外展示时不拉取上游模型目录，避免无谓请求
+                with _dyn_models_lock:
+                    _dyn_models_cache.clear()
+                time.sleep(_DYN_MODELS_REFRESH_INTERVAL)
+                continue
+            with pool._lock:
+                endpoints = list(pool._endpoints)
+            new_cache: dict = {}
+            now = int(time.time())
+            for ep in endpoints:
+                if not ep.enabled:
+                    continue
+                try:
+                    models = pool.fetch_models(ep.base_url, ep.api_key, timeout=8,
+                                               use_proxy=ep.use_proxy, protocol=ep.protocol)
+                    for m in models:
+                        mid = m.get("id", "")
+                        if mid and mid not in new_cache:
+                            new_cache[mid] = now
+                except Exception:
+                    pass
+            if new_cache:
+                with _dyn_models_lock:
+                    _dyn_models_cache.update(new_cache)
+        except Exception:
+            pass
+        time.sleep(_DYN_MODELS_REFRESH_INTERVAL)
+
+threading.Thread(target=_refresh_dynamic_models, daemon=True).start()
+
+# ── Phase 5: 请求缓存 ───────────────────────────────────────────────────────
+class RequestCache:
+    """内存请求缓存：对相同请求返回缓存结果，避免重复消耗上游配额"""
+    def __init__(self, max_entries=1000, default_ttl=3600):
+        self._cache: dict = {}   # hash_key -> (result, expires_at)
+        self._lock = threading.Lock()
+        self.max_entries = max_entries
+        self.default_ttl = default_ttl
+        self.hits = 0
+        self.misses = 0
+
+    def _make_key(self, messages, model, extra_payload):
+        key_data = json.dumps({
+            "m": model or "",
+            "msg": messages,
+            "t": extra_payload.get("temperature"),
+            "mt": extra_payload.get("max_tokens"),
+            "tp": extra_payload.get("top_p"),
+        }, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(key_data.encode()).hexdigest()[:32]
+
+    def get(self, messages, model, extra_payload):
+        key = self._make_key(messages, model, extra_payload)
+        with self._lock:
+            item = self._cache.get(key)
+            if item and item[1] > time.time():
+                self.hits += 1
+                return item[0]
+            if item:
+                del self._cache[key]
+            self.misses += 1
+            return None
+
+    def set(self, messages, model, extra_payload, result, ttl=None):
+        key = self._make_key(messages, model, extra_payload)
+        with self._lock:
+            if len(self._cache) >= self.max_entries:
+                # 淘汰最早过期的
+                oldest = min(self._cache.items(), key=lambda x: x[1][1])
+                del self._cache[oldest[0]]
+            self._cache[key] = (result, time.time() + (ttl or self.default_ttl))
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+            self.hits = 0
+            self.misses = 0
+
+    def stats(self):
+        with self._lock:
+            valid = sum(1 for _, (_, exp) in self._cache.items() if exp > time.time())
+            total = self.hits + self.misses
+            return {
+                "entries": valid,
+                "capacity": self.max_entries,
+                "hits": self.hits,
+                "misses": self.misses,
+                "hit_rate": round(self.hits / max(1, total) * 100, 1),
+            }
+
+request_cache = RequestCache()
 
 # 启动数据库定期维护线程
 _db_maintenance_thread = threading.Thread(target=_db_maintenance_loop, daemon=True)
@@ -2106,44 +2601,54 @@ _db_maintenance_thread.start()
 
 def list_openai_models():
     now = int(time.time())
-    seen = set()
+    seen = set()            # 已输出的对外 id（含别名、动态模型），精确去重
+    seen_canon = set()      # 已输出模型的归一化键，合并"同模型不同写法"（与路由去重口径一致）
     models = []
     with pool._lock:
         endpoints = list(pool._endpoints)
 
     for ep in endpoints:
         model = (ep.model or "").strip()
-        if not ep.enabled or not model or model in seen:
+        if not ep.enabled or not ep.in_pool or not model:
             continue
+        ck = canon_model_key(model)
+        if not ck or ck in seen_canon:
+            continue
+        seen_canon.add(ck)
         seen.add(model)
-        models.append({
-            "id": model,
-            "object": "model",
-            "created": now,
-            "owned_by": "api-pool",
-        })
+        models.append({"id": model, "object": "model", "created": now, "owned_by": "api-pool"})
 
-    # 全局别名也对外可见，方便客户端直接选中
+    # 仅展示指向已启用、已入池模型的别名，避免旧配置暴露池外模型。
+    # 别名是用户有意设置的对外名，按归一化键判断目标是否在池内；别名本身按精确名去重、不做归一化合并。
     with pool._lock:
         aliases = dict(pool.model_aliases)
-    for alias in aliases:
+    for alias, target in aliases.items():
         alias = (alias or "").strip()
-        if alias and alias not in seen:
+        target = (target or "").strip()
+        if not alias or alias in seen:
+            continue
+        if canon_model_key(target) in seen_canon:
             seen.add(alias)
-            models.append({
-                "id": alias,
-                "object": "model",
-                "created": now,
-                "owned_by": "api-pool",
-            })
+            seen_canon.add(canon_model_key(alias))
+            models.append({"id": alias, "object": "model", "created": now, "owned_by": "api-pool"})
+
+    # 合并后台动态刷新到的模型（仅在开启"对外展示上游模型"时；默认关闭）
+    if EXPOSE_UPSTREAM_MODELS:
+        with _dyn_models_lock:
+            dyn_snap = dict(_dyn_models_cache)
+        for mid, created in dyn_snap.items():
+            mid = (mid or "").strip()
+            if not mid:
+                continue
+            ck = canon_model_key(mid)
+            if ck in seen_canon:
+                continue
+            seen_canon.add(ck)
+            seen.add(mid)
+            models.append({"id": mid, "object": "model", "created": created, "owned_by": "api-pool-upstream"})
 
     if "api-pool-aggregated" not in seen:
-        models.insert(0, {
-            "id": "api-pool-aggregated",
-            "object": "model",
-            "created": now,
-            "owned_by": "api-pool",
-        })
+        models.insert(0, {"id": "api-pool-aggregated", "object": "model", "created": now, "owned_by": "api-pool"})
 
     return {"object": "list", "data": models}
 
@@ -2331,6 +2836,276 @@ def make_chat_completion_response(body, result):
     }
 
 
+# ============================================================
+#  Anthropic Messages API (/v1/messages) 支持
+# ============================================================
+
+def _has_cache_control_in_payload(body_obj):
+    """检测 Anthropic body 中是否存在 cache_control 字段（用于 prompt caching）"""
+    for m in (body_obj.get("messages") or []):
+        content = m.get("content", "")
+        if isinstance(content, list):
+            if any(isinstance(b, dict) and b.get("cache_control") for b in content):
+                return True
+    sys_val = body_obj.get("system")
+    if isinstance(sys_val, list):
+        if any(isinstance(b, dict) and b.get("cache_control") for b in sys_val):
+            return True
+    return False
+
+def anthropic_content_to_text(content):
+    """将 Anthropic content（string 或 block 列表）转成纯文本"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                btype = block.get("type")
+                if btype == "text":
+                    parts.append(block.get("text", ""))
+                elif btype == "tool_result":
+                    parts.append(anthropic_content_to_text(block.get("content", "")))
+        return "".join(parts)
+    return "" if content is None else str(content)
+
+
+def anthropic_messages_to_openai_messages(body):
+    """Anthropic Messages API body → OpenAI chat messages list"""
+    openai_msgs = []
+
+    # system prompt
+    sys_prompt = body.get("system")
+    if sys_prompt:
+        if isinstance(sys_prompt, list):
+            sys_text = "".join(
+                b.get("text", "") for b in sys_prompt
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        else:
+            sys_text = str(sys_prompt)
+        if sys_text:
+            openai_msgs.append({"role": "system", "content": sys_text})
+
+    for msg in body.get("messages", []):
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        if role == "user":
+            if isinstance(content, str):
+                openai_msgs.append({"role": "user", "content": content})
+            elif isinstance(content, list):
+                text_parts = []
+                tool_results = []
+                for block in content:
+                    if not isinstance(block, dict):
+                        text_parts.append(str(block))
+                        continue
+                    btype = block.get("type")
+                    if btype == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif btype == "tool_result":
+                        tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": block.get("tool_use_id", ""),
+                            "content": anthropic_content_to_text(block.get("content", "")),
+                        })
+                    elif btype == "image":
+                        src = block.get("source", {})
+                        if src.get("type") == "url":
+                            text_parts.append(f"[image: {src.get('url', '')}]")
+                        else:
+                            text_parts.append("[image]")
+                if text_parts:
+                    openai_msgs.append({"role": "user", "content": "".join(text_parts)})
+                openai_msgs.extend(tool_results)
+            else:
+                openai_msgs.append({"role": "user", "content": str(content)})
+
+        elif role == "assistant":
+            if isinstance(content, str):
+                openai_msgs.append({"role": "assistant", "content": content})
+            elif isinstance(content, list):
+                text_parts = []
+                tool_use_blocks = []
+                for block in content:
+                    if not isinstance(block, dict):
+                        text_parts.append(str(block))
+                        continue
+                    btype = block.get("type")
+                    if btype == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif btype == "tool_use":
+                        inp = block.get("input", {})
+                        if not isinstance(inp, str):
+                            inp = json.dumps(inp, ensure_ascii=False)
+                        tool_use_blocks.append({
+                            "id": block.get("id") or f"call_{secrets.token_hex(8)}",
+                            "type": "function",
+                            "function": {
+                                "name": block.get("name", ""),
+                                "arguments": inp,
+                            },
+                        })
+                msg_dict = {"role": "assistant", "content": "".join(text_parts) or None}
+                if tool_use_blocks:
+                    msg_dict["tool_calls"] = tool_use_blocks
+                openai_msgs.append(msg_dict)
+            else:
+                openai_msgs.append({"role": "assistant", "content": str(content)})
+
+        else:
+            openai_msgs.append({"role": role, "content": anthropic_content_to_text(content)})
+
+    if not openai_msgs:
+        openai_msgs.append({"role": "user", "content": ""})
+    return openai_msgs
+
+
+def anthropic_tools_to_openai_tools(tools):
+    """Anthropic tools 定义 → OpenAI function tools"""
+    result = []
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        result.append({
+            "type": "function",
+            "function": {
+                "name": t.get("name", ""),
+                "description": t.get("description", ""),
+                "parameters": t.get("input_schema") or {"type": "object", "properties": {}},
+            },
+        })
+    return result
+
+
+def make_anthropic_response(body, result):
+    """将 pool.chat() 结果构建成 Anthropic Messages API 格式响应"""
+    msg_id = f"msg_{int(time.time()*1000)}{secrets.token_hex(4)}"
+    text = extract_chat_result_text(result)
+    tool_calls = extract_chat_result_tool_calls(result)
+
+    # 保留来自 Anthropic 端点的 thinking blocks
+    thinking_blocks = result.get("_anthropic_thinking_blocks", []) if isinstance(result, dict) else []
+
+    content_blocks = list(thinking_blocks)  # thinking 在 text 之前
+    if text:
+        content_blocks.append({"type": "text", "text": text})
+    for tc in tool_calls:
+        fn = tc.get("function", {})
+        inp_str = fn.get("arguments", "{}")
+        try:
+            inp_obj = json.loads(inp_str)
+        except Exception:
+            inp_obj = {}
+        content_blocks.append({
+            "type": "tool_use",
+            "id": tc.get("id") or f"toolu_{secrets.token_hex(8)}",
+            "name": fn.get("name", ""),
+            "input": inp_obj,
+        })
+    if not content_blocks:
+        content_blocks.append({"type": "text", "text": ""})
+
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    if isinstance(result, dict):
+        u = result.get("usage", {}) or {}
+        usage["input_tokens"] = u.get("prompt_tokens", 0) or u.get("input_tokens", 0) or 0
+        usage["output_tokens"] = u.get("completion_tokens", 0) or u.get("output_tokens", 0) or 0
+
+    served_model = result.get("model") if isinstance(result, dict) else None
+    stop_reason = "tool_use" if tool_calls else "end_turn"
+
+    return {
+        "id": msg_id,
+        "type": "message",
+        "role": "assistant",
+        "content": content_blocks,
+        "model": served_model or body.get("model") or "api-pool-aggregated",
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+        "usage": usage,
+    }
+
+
+def make_anthropic_stream(body, result):
+    """将 pool.chat() 结果构建成 Anthropic SSE 流格式"""
+    msg_id = f"msg_{int(time.time()*1000)}{secrets.token_hex(4)}"
+    text = extract_chat_result_text(result)
+    tool_calls = extract_chat_result_tool_calls(result)
+
+    served_model = result.get("model") if isinstance(result, dict) else None
+    model = served_model or body.get("model") or "api-pool-aggregated"
+
+    input_tokens = 0
+    output_tokens = 0
+    if isinstance(result, dict):
+        u = result.get("usage", {}) or {}
+        input_tokens = u.get("prompt_tokens", 0) or u.get("input_tokens", 0) or 0
+        output_tokens = u.get("completion_tokens", 0) or u.get("output_tokens", 0) or 0
+
+    stop_reason = "tool_use" if tool_calls else "end_turn"
+
+    def gen():
+        yield (b"event: message_start\ndata: " + json.dumps({
+            "type": "message_start",
+            "message": {
+                "id": msg_id, "type": "message", "role": "assistant",
+                "content": [], "model": model,
+                "stop_reason": None, "stop_sequence": None,
+                "usage": {"input_tokens": input_tokens, "output_tokens": 0},
+            }
+        }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+
+        block_idx = 0
+
+        if text:
+            yield (b"event: content_block_start\ndata: " + json.dumps({
+                "type": "content_block_start", "index": block_idx,
+                "content_block": {"type": "text", "text": ""},
+            }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+            yield b"event: ping\ndata: {\"type\": \"ping\"}\n\n"
+            yield (b"event: content_block_delta\ndata: " + json.dumps({
+                "type": "content_block_delta", "index": block_idx,
+                "delta": {"type": "text_delta", "text": text},
+            }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+            yield (b"event: content_block_stop\ndata: " + json.dumps({
+                "type": "content_block_stop", "index": block_idx,
+            }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+            block_idx += 1
+
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            inp_str = fn.get("arguments", "{}")
+            tool_id = tc.get("id") or f"toolu_{secrets.token_hex(8)}"
+            yield (b"event: content_block_start\ndata: " + json.dumps({
+                "type": "content_block_start", "index": block_idx,
+                "content_block": {
+                    "type": "tool_use", "id": tool_id,
+                    "name": fn.get("name", ""), "input": {},
+                },
+            }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+            yield (b"event: content_block_delta\ndata: " + json.dumps({
+                "type": "content_block_delta", "index": block_idx,
+                "delta": {"type": "input_json_delta", "partial_json": inp_str},
+            }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+            yield (b"event: content_block_stop\ndata: " + json.dumps({
+                "type": "content_block_stop", "index": block_idx,
+            }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+            block_idx += 1
+
+        yield (b"event: message_delta\ndata: " + json.dumps({
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+            "usage": {"output_tokens": output_tokens},
+        }, ensure_ascii=False).encode("utf-8") + b"\n\n")
+        yield b"event: message_stop\ndata: {\"type\": \"message_stop\"}\n\n"
+
+    return gen()
+
+
 def make_responses_response(body, text, served_model=None, tool_calls=None):
     created = int(time.time())
     response_id = f"resp_{created}{secrets.token_hex(4)}"
@@ -2514,6 +3289,30 @@ def api_handler(method, path, body):
         api_key, hint = security_manager.rotate_client_api_key()
         return 200, {"ok": True, "api_key": api_key, "client_api_key_hint": hint}, False
 
+    # --- 多 Key 管理 ---
+    if method == "GET" and cp == "/api/security/api-keys":
+        return 200, {"ok": True, "keys": security_manager.list_client_keys()}, False
+
+    if method == "POST" and cp == "/api/security/api-keys":
+        name = body.get("name", "新 Key")
+        kid, plain, hint = security_manager.add_client_key(name)
+        return 200, {"ok": True, "id": kid, "api_key": plain, "hint": hint}, False
+
+    if method == "DELETE" and cp.startswith("/api/security/api-keys/"):
+        kid = cp.split("/api/security/api-keys/", 1)[1].strip()
+        ok, err = security_manager.delete_client_key(kid)
+        if not ok:
+            return 400, {"ok": False, "error": err}, False
+        return 200, {"ok": True}, False
+
+    if method == "PUT" and cp.startswith("/api/security/api-keys/") and cp.endswith("/toggle"):
+        kid = cp.split("/api/security/api-keys/", 1)[1].replace("/toggle", "").strip()
+        enabled = body.get("enabled", True)
+        ok, err = security_manager.toggle_client_key(kid, enabled)
+        if not ok:
+            return 400, {"ok": False, "error": err}, False
+        return 200, {"ok": True}, False
+
     # ================= 代理接口 =================
     if method == "POST" and cp in ("/v1/chat/completions", "/chat/completions"):
         messages = body.get("messages", [])
@@ -2623,6 +3422,102 @@ def api_handler(method, path, body):
             return e.status, {"error": {"message": str(e), "type": e.error_type, "model": e.model}}, False
         except AllEndpointsFailed as e:
             return 500, {"error": {"message": f"All endpoints failed: {e.errors}", "type": "server_error"}}, False
+        except Exception as e:
+            return 500, {"error": {"message": str(e), "type": "server_error"}}, False
+
+    # ================= Anthropic Messages API =================
+    if method == "POST" and cp in ("/v1/messages", "/messages"):
+        messages = anthropic_messages_to_openai_messages(body)
+        is_stream = body.get("stream", False)
+        extra_payload = {}
+        if body.get("max_tokens"):
+            extra_payload["max_tokens"] = body["max_tokens"]
+        for k in ("temperature", "top_p"):
+            if k in body:
+                extra_payload[k] = body[k]
+        if body.get("tools"):
+            chat_tools = anthropic_tools_to_openai_tools(body["tools"])
+            if chat_tools:
+                extra_payload["tools"] = chat_tools
+                tc = body.get("tool_choice")
+                if isinstance(tc, dict):
+                    tc_type = tc.get("type")
+                    if tc_type == "any":
+                        extra_payload["tool_choice"] = "required"
+                    elif tc_type == "tool":
+                        extra_payload["tool_choice"] = {
+                            "type": "function",
+                            "function": {"name": tc.get("name", "")},
+                        }
+
+        # thinking 或 prompt caching：保留原始 Anthropic body，
+        # 当目标是 Anthropic 端点时跳过格式来回转换（使用模块级 _has_cache_control_in_payload）
+        if body.get("thinking") or _has_cache_control_in_payload(body):
+            extra_payload["_anthropic_native_body"] = body
+
+        try:
+            result = pool.chat(messages, model=body.get("model"), extra_payload=extra_payload)
+            # 原生 Anthropic 流（thinking 场景）：直接透传
+            if is_stream and isinstance(result, dict) and "_anthropic_native_stream" in result:
+                return 200, result["_anthropic_native_stream"], True
+            if is_stream:
+                return 200, make_anthropic_stream(body, result), True
+            return 200, make_anthropic_response(body, result), False
+        except ModelRouteError as e:
+            return e.status, {"error": {"message": str(e), "type": e.error_type}}, False
+        except AllEndpointsFailed as e:
+            return 500, {"error": {"message": f"所有端点均已失效: {e.errors}", "type": "server_error"}}, False
+        except Exception as e:
+            return 500, {"error": {"message": str(e), "type": "server_error"}}, False
+
+    # ================= Embeddings API (/v1/embeddings) =================
+    if method == "POST" and cp in ("/v1/embeddings", "/embeddings"):
+        try:
+            result = pool.forward_request("embeddings", body)
+            return 200, result, False
+        except ModelRouteError as e:
+            return e.status, {"error": {"message": str(e), "type": e.error_type}}, False
+        except AllEndpointsFailed as e:
+            return 500, {"error": {"message": f"所有端点均已失效: {e.errors}", "type": "server_error"}}, False
+        except Exception as e:
+            return 500, {"error": {"message": str(e), "type": "server_error"}}, False
+
+    # ================= Image Generation API (/v1/images/generations) =================
+    if method == "POST" and cp in ("/v1/images/generations", "/images/generations"):
+        try:
+            result = pool.forward_request("images/generations", body)
+            return 200, result, False
+        except ModelRouteError as e:
+            return e.status, {"error": {"message": str(e), "type": e.error_type}}, False
+        except AllEndpointsFailed as e:
+            return 500, {"error": {"message": f"所有端点均已失效: {e.errors}", "type": "server_error"}}, False
+        except Exception as e:
+            return 500, {"error": {"message": str(e), "type": "server_error"}}, False
+
+    # ================= Legacy Completions API (/v1/completions) =================
+    if method == "POST" and cp in ("/v1/completions", "/completions"):
+        try:
+            result = pool.forward_request("completions", body)
+            return 200, result, False
+        except ModelRouteError as e:
+            return e.status, {"error": {"message": str(e), "type": e.error_type}}, False
+        except AllEndpointsFailed as e:
+            return 500, {"error": {"message": f"所有端点均已失效: {e.errors}", "type": "server_error"}}, False
+        except Exception as e:
+            return 500, {"error": {"message": str(e), "type": "server_error"}}, False
+
+    # ================= Audio Speech API (/v1/audio/speech) =================
+    if method == "POST" and cp in ("/v1/audio/speech", "/audio/speech"):
+        try:
+            result = pool.forward_request("audio/speech", body, return_raw=True)
+            # 二进制响应：返回 (bytes, content_type) 标记为 "binary"
+            if isinstance(result, tuple):
+                return 200, result, "binary"
+            return 200, result, False
+        except ModelRouteError as e:
+            return e.status, {"error": {"message": str(e), "type": e.error_type}}, False
+        except AllEndpointsFailed as e:
+            return 500, {"error": {"message": f"所有端点均已失效: {e.errors}", "type": "server_error"}}, False
         except Exception as e:
             return 500, {"error": {"message": str(e), "type": "server_error"}}, False
 
@@ -2846,13 +3741,17 @@ def api_handler(method, path, body):
                 models.append({"model": m, "enabled": ep.get("enabled", False), "in_pool": ep.get("in_pool", False)})
         with pool._lock:
             aliases = dict(pool.model_aliases)
-        return 200, {"ok": True, "model_aliases": aliases, "available_models": models}, False
+        return 200, {"ok": True, "model_aliases": aliases, "available_models": models, "expose_upstream_models": EXPOSE_UPSTREAM_MODELS}, False
     if method == "POST" and cp == "/api/model-aliases":
         # 全量替换映射表: {"model_aliases": {"别名": "真实模型", ...}}
         raw = body.get("model_aliases")
         if not isinstance(raw, dict):
             return 400, {"ok": False, "error": "model_aliases 必须是对象 {别名: 真实模型}"}, False
-        pool_models = {(ep.get("model") or "").strip() for ep in pool.list_endpoints()}
+        pool_models = {
+            (ep.get("model") or "").strip()
+            for ep in pool.list_endpoints()
+            if ep.get("enabled", False) and ep.get("in_pool", False)
+        }
         cleaned = {}
         for k, v in raw.items():
             alias = str(k).strip(); target = str(v).strip()
@@ -2870,12 +3769,29 @@ def api_handler(method, path, body):
         _sync_to_config()
         sys_log(f"模型映射已更新（{len(cleaned)} 条）", "INFO")
         return 200, {"ok": True, "model_aliases": cleaned}, False
+    if method == "POST" and cp == "/api/settings/expose-upstream-models":
+        set_expose_upstream_models(body.get("enabled"))
+        if not EXPOSE_UPSTREAM_MODELS:
+            with _dyn_models_lock:
+                _dyn_models_cache.clear()
+        _sync_to_config()
+        sys_log(f"上游模型对外展示已{'开启' if EXPOSE_UPSTREAM_MODELS else '关闭'}", "INFO")
+        return 200, {"ok": True, "enabled": EXPOSE_UPSTREAM_MODELS}, False
     if method == "POST" and cp == "/api/reset": pool.reset(); return 200, {"ok": True}, False
+
+    # ── 请求缓存 API ─────────────────────────────────────────────────────────
+    if method == "GET" and cp == "/api/cache/stats":
+        return 200, {"ok": True, **request_cache.stats()}, False
+    if method == "POST" and cp == "/api/cache/clear":
+        request_cache.clear()
+        return 200, {"ok": True}, False
 
     return 404, {"error": "Not found"}, False
 
 def _sync_to_config():
-    save_config([{"id": ep.get("id"), "name": ep["name"], "base_url": ep["base_url"], "api_key": ep.get("api_key_full", ep.get("api_key", "")), "model": ep["model"], "public_model": ep.get("public_model", ep["model"]), "upstream_model": ep.get("upstream_model", ep["model"]), "priority": ep["priority"], "timeout": ep["timeout"], "max_retries": ep["max_retries"], "enabled": ep["enabled"], "cooldown_minutes": ep["cooldown_minutes"], "daily_limit": ep.get("daily_limit", 0), "rpm_limit": ep.get("rpm_limit", 0), "use_proxy": ep.get("use_proxy", True), "protocol": ep.get("protocol", "openai"), "health_mode": ep.get("health_mode", "chat"), "billing_mode": ep.get("billing_mode", "subscription"), "is_vision": ep.get("is_vision", True), "in_pool": ep.get("in_pool", True)} for ep in pool.list_endpoints()], station_settings=pool.station_settings, model_aliases=pool.model_aliases)
+    with pool._lock:
+        eps = list(pool._endpoints)
+    save_config([{"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key, "model": ep.model, "public_model": ep.public_model, "upstream_model": ep.upstream_model, "priority": ep.priority, "timeout": ep.timeout, "max_retries": ep.max_retries, "enabled": ep.enabled, "cooldown_minutes": ep.cooldown_minutes, "daily_limit": ep.daily_limit, "rpm_limit": ep.rpm_limit, "use_proxy": ep.use_proxy, "protocol": ep.protocol, "health_mode": ep.health_mode, "billing_mode": ep.billing_mode, "is_vision": ep.is_vision, "in_pool": ep.in_pool} for ep in eps], station_settings=pool.station_settings, model_aliases=pool.model_aliases)
 
 
 LOGIN_HTML = r"""<!DOCTYPE html>
@@ -3206,7 +4122,7 @@ select option { background: var(--bg); color: var(--text); }
 <div class="api-info-card">
   <div style="font-size: 13px; font-weight: 700; color: var(--accent-light); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">🔗 客户端接入配置 (Client Config)</div>
   <div style="display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px;">
-    <div><span style="color: var(--text-dim); margin-right: 6px;">接口地址 (Base URL):</span><code id="displayUrl">http://localhost:5200/v1</code></div>
+    <div><span style="color: var(--text-dim); margin-right: 6px;">接口地址 (Base URL):</span><code id="displayUrl">http://localhost:5100/v1</code></div>
     <div class="client-key-row">
       <span style="color: var(--text-dim); margin-right: 0;">API Key:</span>
       <code id="clientApiKeyHint">加载中</code>
@@ -3229,6 +4145,10 @@ select option { background: var(--bg); color: var(--text); }
     <button class="key-action-btn" onclick="addModelAlias()" title="添加映射">添加</button>
   </div>
   <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">客户端用别名请求时，自动路由到映射的池内模型（同模型多上游仍自动故障转移），响应中的模型名保持为别名；别名也会出现在 /v1/models 列表中。</div>
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-top:12px;cursor:pointer;">
+    <input type="checkbox" id="exposeUpstreamModels" onchange="toggleExposeUpstream()" style="width:16px;height:16px;cursor:pointer;">
+    <span>对外展示上游全部模型（关闭时 /v1/models 只显示已选模型和别名，推荐关闭以保持列表干净）</span>
+  </label>
 </div>
 
 <div class="api-info-card" id="modelUsageCardMain">
@@ -3428,15 +4348,16 @@ select option { background: var(--bg); color: var(--text); }
     <div class="form-group"><label>名称</label><input type="text" id="fName" placeholder="如 OpenAI 或 DeepSeek" oninput="this.dataset.autofilled='false'"></div>
     <div class="form-group"><label>Base URL</label><input type="text" id="fUrl" placeholder="https://api.openai.com/v1" oninput="checkFetchBtn()"></div>
     <div class="form-group">
-      <label>上游 API Key</label>
-      <input type="password" id="fKey" placeholder="填写模型服务商提供的 Key，不是 API Pool 客户端 Key" oninput="checkFetchBtn()">
+      <label>上游 API Key<span style="font-size:11px;color:var(--text-dim);font-weight:normal">（支持多个，不同 Key 的模型可合并拉取）</span></label>
+      <div id="keyListContainer"></div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:6px;font-size:12px" onclick="addKey()">＋ 添加秘钥</button>
       <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">用于连接 Base URL 对应的模型服务商。</div>
     </div>
     <div class="form-group">
       <label>对外模型名</label>
       <div class="model-row">
         <input type="text" id="fModel" placeholder="gpt-4o">
-        <button class="btn btn-yellow btn-sm" id="fetchModelsBtn" onclick="fetchModels()" disabled>🔍 获取</button>
+        <button class="btn btn-yellow btn-sm" id="fetchModelsBtn" onclick="fetchAllKeys()" disabled>🔍 获取全部</button>
       </div>
       <div id="modelBrowser" style="display:none"></div>
       <div id="batchBar" style="display:none"></div>
@@ -3493,8 +4414,25 @@ select option { background: var(--bg); color: var(--text); }
     <div class="form-actions" style="justify-content:flex-start;margin-bottom:20px;">
       <button class="btn btn-primary" onclick="saveAdminSecurity()">保存账号密码</button>
     </div>
-    <div class="form-group"><label>客户端 API Key</label><input type="text" id="secApiKey" placeholder="输入自定义 Key，或点击生成"></div>
-    <div style="font-size:12px;color:var(--text-dim);margin-top:-6px;">当前：<code id="secApiKeyHint"></code></div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <label style="font-weight:600;font-size:13px;">客户端 API Keys</label>
+      <button class="btn btn-green btn-sm" onclick="showAddKeyForm()">+ 创建新 Key</button>
+    </div>
+    <div id="apiKeysList" style="margin-bottom:12px;"></div>
+    <div id="addKeyForm" style="display:none;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;">
+      <div class="form-group" style="margin-bottom:8px;"><label>Key 名称</label><input type="text" id="newKeyName" placeholder="例如: Claude Code, Cursor..." style="width:100%"></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary btn-sm" onclick="createNewKey()">创建</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('addKeyForm').style.display='none'">取消</button>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:16px;">Key 明文仅在创建时显示一次，请立即复制保存。</div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+    <div class="form-group"><label>手动设置客户端 Key（向后兼容）</label><input type="text" id="secApiKey" placeholder="输入自定义 Key，或点击生成"></div>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:-6px;">当前第一个 Key：<code id="secApiKeyHint"></code></div>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeSecurityModal()">关闭</button>
       <button class="btn btn-yellow" onclick="setClientApiKey()">设置 Key</button>
@@ -3557,6 +4495,7 @@ async function api(method,path,body){
 }
 
 let allModels=[],selectedModels=new Set(),latencyResults={},visionResults={};
+let keyList=[{key:''}],modelKeyMap={};
 let epFilter='all',modelPage=1,PP=50;
 let clientApiKeyPlain='';
 let stationFilter='';
@@ -3590,6 +4529,14 @@ async function loadModelAliases(){
     opts.push(`<option value="${esc(m.model)}">${esc(m.model)}${tag}</option>`);
   });
   sel.innerHTML=opts.join('');
+  const ex=document.getElementById('exposeUpstreamModels');
+  if(ex)ex.checked=!!r.expose_upstream_models;
+}
+async function toggleExposeUpstream(){
+  const ex=document.getElementById('exposeUpstreamModels');
+  const r=await api('POST','/api/settings/expose-upstream-models',{enabled:ex.checked});
+  if(r&&r.ok)toast(ex.checked?'已开启：对外展示上游全部模型':'已关闭：仅展示已选模型和别名','success');
+  else{toast(r&&r.error||'设置失败','error');ex.checked=!ex.checked;}
 }
 async function addModelAlias(){
   const alias=document.getElementById('aliasName').value.trim();
@@ -3615,6 +4562,63 @@ async function loadSecurity(){
   document.getElementById('secApiKeyHint').textContent=r.client_api_key_hint||'未设置';
   document.getElementById('secUsername').value=r.username||'admin';
   if(!r.client_api_key_available) clientApiKeyPlain='';
+  loadApiKeys();
+}
+
+// ── 多 Key 管理 ─────────────────────────────────────────────
+async function loadApiKeys(){
+  const r=await api('GET','/api/security/api-keys');
+  if(!r||!r.ok)return;
+  const list=document.getElementById('apiKeysList');
+  if(!r.keys||!r.keys.length){list.innerHTML='<div style="color:var(--text-dim);font-size:12px;padding:4px 0;">暂无 Key</div>';return;}
+  list.innerHTML=r.keys.map(k=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:6px;background:rgba(255,255,255,.03);">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:12px;">${esc(k.name)}</div>
+        <div style="font-size:11px;color:var(--text-dim);font-family:monospace;">${esc(k.hint)}</div>
+      </div>
+      <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${k.enabled?'rgba(74,222,128,.15)':'rgba(255,255,255,.07)'};color:${k.enabled?'var(--green)':'var(--text-dim)'};">${k.enabled?'启用':'停用'}</span>
+      <button class="btn btn-ghost btn-sm" title="${k.enabled?'禁用':'启用'}" onclick="toggleApiKey('${k.id}',${!k.enabled})">${k.enabled?'禁用':'启用'}</button>
+      <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteApiKey('${k.id}','${esc(k.name)}')">删除</button>
+    </div>`).join('');
+}
+
+function showAddKeyForm(){
+  document.getElementById('addKeyForm').style.display='block';
+  document.getElementById('newKeyName').focus();
+}
+
+async function createNewKey(){
+  const name=document.getElementById('newKeyName').value.trim()||'新 Key';
+  const r=await api('POST','/api/security/api-keys',{name});
+  if(r&&r.ok){
+    document.getElementById('addKeyForm').style.display='none';
+    document.getElementById('newKeyName').value='';
+    toast('新 Key 已创建，请复制保存','success');
+    // 弹出显示明文
+    try{await navigator.clipboard.writeText(r.api_key);}catch(e){}
+    const div=document.createElement('div');
+    div.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1a1b23;border:1px solid var(--border);border-radius:12px;padding:20px;z-index:9999;min-width:360px;';
+    div.innerHTML=`<div style="font-weight:700;margin-bottom:8px;font-size:14px;">新 Key 明文（仅显示一次）</div>
+      <code style="font-size:12px;word-break:break-all;display:block;background:rgba(0,0,0,.3);padding:10px;border-radius:6px;margin-bottom:12px;">${esc(r.api_key)}</code>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;">已自动复制到剪贴板</div>
+      <button class="btn btn-primary btn-sm" onclick="this.closest('div[style]').remove()">已保存，关闭</button>`;
+    document.body.appendChild(div);
+    loadApiKeys();
+  }else toast(r&&r.error||'创建失败','error');
+}
+
+async function deleteApiKey(id,name){
+  if(!confirm(`确定要删除 Key「${name}」吗？`))return;
+  const r=await api('DELETE',`/api/security/api-keys/${encodeURIComponent(id)}`);
+  if(r&&r.ok){toast('Key 已删除','success');loadApiKeys();}
+  else toast(r&&r.error||'删除失败','error');
+}
+
+async function toggleApiKey(id,enabled){
+  const r=await api('PUT',`/api/security/api-keys/${encodeURIComponent(id)}/toggle`,{enabled});
+  if(r&&r.ok)loadApiKeys();
+  else toast(r&&r.error||'操作失败','error');
 }
 async function getClientApiKey(){
   const r=await api('GET','/api/security/api-key/reveal');
@@ -3783,7 +4787,7 @@ async function seFetchModels(){
   openAddModal();
   document.getElementById('fName').value=tpl.name;
   document.getElementById('fUrl').value=tpl.base_url;
-  document.getElementById('fKey').value=tpl.api_key_full||'';
+  keyList=[{key:tpl.api_key_full||''}];modelKeyMap={};renderKeyList();
   document.getElementById('fTimeout').value=tpl.timeout;
   document.getElementById('fRetries').value=tpl.max_retries;
   document.getElementById('fCooldown').value=tpl.cooldown_minutes;
@@ -3793,7 +4797,7 @@ async function seFetchModels(){
   document.getElementById('fProtocol').value=tpl.protocol||'openai';
   document.getElementById('fHealthMode').value=tpl.health_mode||'chat';
   checkFetchBtn();
-  fetchModels();
+  fetchAllKeys();
 }
 function stationKeyOf(u){
   // 与后端 station_key 一致：按 host（含端口）小写归组
@@ -3984,6 +4988,33 @@ function openTestDrawer(targetId, targetName) {
 function closeTestDrawer() {
   document.getElementById('testDrawer').classList.remove('show');
 }
+
+async function sendEmbeddings(){
+  const model=document.getElementById('embModel').value||'text-embedding-3-small';
+  const input=document.getElementById('embInput').value||'Hello';
+  const el=document.getElementById('embResult');
+  el.style.display='block';el.textContent='请求中...';
+  const r=await api('POST','/v1/embeddings',{model,input});
+  if(r&&r.data&&r.data[0]&&r.data[0].embedding){
+    const vec=r.data[0].embedding;
+    el.innerHTML=`<b>维度: ${vec.length}</b><br>前20维: [${vec.slice(0,20).map(v=>v.toFixed(4)).join(', ')}...]<br><span style="color:var(--text-dim)">usage: prompt_tokens=${r.usage?.prompt_tokens||0}</span>`;
+  }else{el.textContent=JSON.stringify(r,null,2);}
+}
+
+async function sendImageGen(){
+  const model=document.getElementById('imgModel').value||'dall-e-3';
+  const prompt=document.getElementById('imgPrompt').value||'A beautiful scene';
+  const size=document.getElementById('imgSize').value||'1024x1024';
+  const el=document.getElementById('imgResult');
+  el.style.display='block';el.innerHTML='<span style="color:var(--text-dim)">生成中，请稍候…</span>';
+  const r=await api('POST','/v1/images/generations',{model,prompt,n:1,size});
+  if(r&&r.data&&r.data[0]){
+    const d=r.data[0];
+    if(d.url){el.innerHTML=`<img src="${d.url}" style="max-width:100%;border-radius:8px;margin-top:8px;" alt="generated">`;}
+    else if(d.b64_json){el.innerHTML=`<img src="data:image/png;base64,${d.b64_json}" style="max-width:100%;border-radius:8px;margin-top:8px;" alt="generated">`;}
+    else{el.textContent=JSON.stringify(r,null,2);}
+  }else{el.textContent=JSON.stringify(r,null,2);}
+}
 async function sendTest() {
   const targetId = document.getElementById('testTargetId').value;
   const m = document.getElementById('testMsg').value || '你好';
@@ -4008,9 +5039,10 @@ async function sendTest() {
 async function resetPool(){await api('POST','/api/reset');toast('已重置','success');refresh();}
 
 function checkFetchBtn(){
-    const u=document.getElementById('fUrl').value.trim(),k=document.getElementById('fKey').value.trim();
-    document.getElementById('fetchModelsBtn').disabled=!(u&&k);
-    
+    const u=document.getElementById('fUrl').value.trim();
+    const hasKey=keyList.some(kv=>kv.key.trim());
+    document.getElementById('fetchModelsBtn').disabled=!(u&&hasKey);
+    keyList.forEach((_,i)=>{const b=document.getElementById('keyFetchBtn'+i);if(b)b.disabled=!(u&&keyList[i].key.trim());});
     const nameEl = document.getElementById('fName');
     if (!nameEl.value || nameEl.dataset.autofilled === 'true') {
         const provider = detectProvider(u);
@@ -4023,6 +5055,19 @@ function checkFetchBtn(){
         }
     }
 }
+function renderKeyList(){
+    const c=document.getElementById('keyListContainer');if(!c)return;
+    const u=!!(document.getElementById('fUrl')?.value?.trim());
+    c.innerHTML=keyList.map((kv,i)=>`<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
+      <input type="password" id="keyInput${i}" placeholder="sk-..." style="flex:1;min-width:0" oninput="keyList[${i}].key=this.value;checkFetchBtn()">
+      <button class="btn btn-yellow btn-sm" id="keyFetchBtn${i}" onclick="fetchModelsForKeyIdx(${i})" title="拉取该 Key 的模型" ${u&&kv.key.trim()?'':'disabled'}>🔍</button>
+      ${keyList.length>1?`<button class="btn btn-ghost btn-sm" onclick="removeKey(${i})" style="color:var(--red);padding:0 6px" title="移除">✕</button>`:''}
+    </div>`).join('');
+    keyList.forEach((kv,i)=>{const inp=document.getElementById('keyInput'+i);if(inp)inp.value=kv.key;});
+    checkFetchBtn();
+}
+function addKey(){keyList.push({key:''});renderKeyList();}
+function removeKey(i){keyList.splice(i,1);if(!keyList.length)keyList.push({key:''});renderKeyList();}
 function detectProvider(url) {
     if(!url) return '';
     const u = url.toLowerCase();
@@ -4049,20 +5094,33 @@ function detectProvider(url) {
     }catch(e){}
     return '';
 }
-async function fetchModels(){
-  const u=document.getElementById('fUrl').value.trim(),k=document.getElementById('fKey').value.trim();
+async function fetchModelsForKeyIdx(idx){
+  const k=keyList[idx]?.key?.trim();
+  const u=document.getElementById('fUrl').value.trim();
   const up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai';
   if(!u||!k){toast('填写 URL 和 Key','error');return;}
+  const btn=document.getElementById('keyFetchBtn'+idx);if(btn){btn.disabled=true;btn.innerHTML='⏳';}
+  try{
+    const r=await api('POST','/api/fetch-models',{base_url:u,api_key:k,use_proxy:up,protocol:pt});
+    if(r.ok&&r.models?.length){
+      const existing=new Set(allModels.map(m=>m.id));let added=0;
+      for(const m of r.models){if(!modelKeyMap[m.id])modelKeyMap[m.id]=k;if(!existing.has(m.id)){m._api_key=k;allModels.push(m);existing.add(m.id);added++;}}
+      modelPage=1;renderModelBrowser();
+      toast(`Key ${idx+1}: ${added>0?added+'个新模型':r.count+'个（已去重）'}，共${allModels.length}个`,'success');
+    }else{toast(`Key ${idx+1}: ${r.error||'无模型'}，跳过`,'warn');}
+  }catch(e){toast(`Key ${idx+1}: ${e.message||'请求失败'}`,'error');}
+  if(btn){btn.disabled=false;btn.innerHTML='🔍';}
+}
+async function fetchAllKeys(){
+  const u=document.getElementById('fUrl').value.trim();
+  if(!u){toast('填写 Base URL','error');return;}
+  const keys=keyList.filter(kv=>kv.key.trim());
+  if(!keys.length){toast('填写至少一个 Key','error');return;}
+  allModels=[];modelKeyMap={};selectedModels=new Set();latencyResults={};visionResults={};modelPage=1;
   const b=document.getElementById('fetchModelsBtn');b.disabled=true;b.innerHTML='⏳';
-  try{const r=await api('POST','/api/fetch-models',{base_url:u,api_key:k,use_proxy:up,protocol:pt});
-    if(r.ok&&r.models?.length){allModels=r.models;selectedModels=new Set();latencyResults={};visionResults={};modelPage=1;renderModelBrowser();toast(`${r.count} 个模型`,'success');}
-    else{document.getElementById('modelBrowser').innerHTML=`<div style="padding:10px;color:var(--red);font-size:12px">❌ ${esc(r.error||'无模型')}</div>`;document.getElementById('modelBrowser').style.display='block';}
-  }catch(e){
-    document.getElementById('modelBrowser').innerHTML=`<div style="padding:10px;color:var(--red);font-size:12px">❌ ${esc(e.message||'请求失败')}</div>`;
-    document.getElementById('modelBrowser').style.display='block';
-    toast('获取失败','error');
-  }
-  b.disabled=false;b.innerHTML='🔍 获取';
+  for(let i=0;i<keyList.length;i++){if(keyList[i].key.trim())await fetchModelsForKeyIdx(i);}
+  b.disabled=false;b.innerHTML='🔍 获取全部';
+  if(allModels.length)renderModelBrowser();
 }
 function isOpenRouter(){return document.getElementById('fUrl').value.includes('openrouter');}
 function isFreeModel(m){if(!m.pricing)return false;return parseFloat(m.pricing.prompt||'1')===0&&parseFloat(m.pricing.completion||'1')===0;}
@@ -4140,40 +5198,44 @@ function updateBatchBar(){
 }
 
 async function testSelectedLatency(){
-  const u=document.getElementById('fUrl').value.trim(),k=document.getElementById('fKey').value.trim();
+  const u=document.getElementById('fUrl').value.trim();
+  const firstKey=keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
   const up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai';
-  if(!u||!k){toast('填写 URL 和 Key','error');return;}
+  if(!u||!firstKey){toast('填写 URL 和 Key','error');return;}
   if(!selectedModels.size){toast('勾选模型','error');return;}
   const ms=[...selectedModels];toast(`测试 ${ms.length} 个...`,'info');
-  for(const mid of ms){latencyResults[mid]={status:'bad',latency_ms:0};filterModels();try{latencyResults[mid]=await api('POST','/api/test-model',{base_url:u,api_key:k,model:mid,use_proxy:up,protocol:pt});}catch(e){latencyResults[mid]={status:'bad',latency_ms:0};}filterModels();}
+  for(const mid of ms){latencyResults[mid]={status:'bad',latency_ms:0};filterModels();try{latencyResults[mid]=await api('POST','/api/test-model',{base_url:u,api_key:modelKeyMap[mid]||firstKey,model:mid,use_proxy:up,protocol:pt});}catch(e){latencyResults[mid]={status:'bad',latency_ms:0};}filterModels();}
   toast(`✅${Object.values(latencyResults).filter(r=>r.ok).length}/${ms.length}`,'success');
 }
 
 async function testSelectedVision(){
-  const u=document.getElementById('fUrl').value.trim(),k=document.getElementById('fKey').value.trim();
+  const u=document.getElementById('fUrl').value.trim();
+  const firstKey=keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
   const up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai';
-  if(!u||!k){toast('填写 URL 和 Key','error');return;}
+  if(!u||!firstKey){toast('填写 URL 和 Key','error');return;}
   if(!selectedModels.size){toast('勾选模型','error');return;}
   const ms=[...selectedModels];toast(`检测 ${ms.length} 个多模态...`,'info');
   let vis=0;
-  for(const mid of ms){visionResults[mid]={supports_vision:false};filterModels();try{const r=await api('POST','/api/test-vision',{base_url:u,api_key:k,model:mid,use_proxy:up,protocol:pt});visionResults[mid]=r;if(r.supports_vision)vis++;}catch(e){visionResults[mid]={supports_vision:false};}filterModels();}
+  for(const mid of ms){visionResults[mid]={supports_vision:false};filterModels();try{const r=await api('POST','/api/test-vision',{base_url:u,api_key:modelKeyMap[mid]||firstKey,model:mid,use_proxy:up,protocol:pt});visionResults[mid]=r;if(r.supports_vision)vis++;}catch(e){visionResults[mid]={supports_vision:false};}filterModels();}
   toast(`多模态: ${vis}/${ms.length} 支持`,'success');
 }
 
 function openAddModal(){
     document.getElementById('editName').value='';document.getElementById('modalTitle').textContent='添加端点';
-    ['fName','fUrl','fKey','fModel','fUpstreamModel'].forEach(id=>document.getElementById(id).value='');
+    ['fName','fUrl','fModel','fUpstreamModel'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('fPriority').value=1;document.getElementById('fTimeout').value=60;document.getElementById('fRetries').value=0;document.getElementById('fCooldown').value=5;document.getElementById('fEnabled').value='true';document.getElementById('fDailyLimit').value=0;document.getElementById('fRpmLimit').value=0;document.getElementById('fProxy').value='true';document.getElementById('fProtocol').value='openai';document.getElementById('fHealthMode').value='chat';document.getElementById('fVision').value='true';
     document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';
     document.getElementById('fetchModelsBtn').disabled=true;document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
-    allModels=[];selectedModels=new Set();latencyResults={};visionResults={};
+    allModels=[];selectedModels=new Set();latencyResults={};visionResults={};keyList=[{key:''}];modelKeyMap={};
+    renderKeyList();
     document.getElementById('modal').classList.add('show');
 }
 function editEndpoint(id){
     api('GET','/api/endpoints').then(eps=>{const ep=eps.find(e=>e.id===id);if(!ep)return;
         document.getElementById('editName').value=id;document.getElementById('modalTitle').textContent='编辑端点';
-        document.getElementById('fName').value=ep.name;document.getElementById('fUrl').value=ep.base_url;document.getElementById('fKey').value=ep.api_key_full||'';document.getElementById('fModel').value=ep.model;document.getElementById('fUpstreamModel').value=ep.upstream_model||ep.model;
+        document.getElementById('fName').value=ep.name;document.getElementById('fUrl').value=ep.base_url;document.getElementById('fModel').value=ep.model;document.getElementById('fUpstreamModel').value=ep.upstream_model||ep.model;
         document.getElementById('fPriority').value=ep.priority;document.getElementById('fTimeout').value=ep.timeout;document.getElementById('fRetries').value=ep.max_retries;document.getElementById('fCooldown').value=ep.cooldown_minutes;document.getElementById('fEnabled').value=String(ep.enabled);document.getElementById('fDailyLimit').value=ep.daily_limit||0;document.getElementById('fRpmLimit').value=ep.rpm_limit||0;document.getElementById('fProxy').value=String(ep.use_proxy!==false);document.getElementById('fProtocol').value=ep.protocol||'openai';document.getElementById('fHealthMode').value=ep.health_mode||'chat';document.getElementById('fVision').value=String(ep.is_vision!==false);
+        keyList=[{key:ep.api_key_full||''}];modelKeyMap={};renderKeyList();
         document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
         allModels=[];selectedModels=new Set();latencyResults={};visionResults={};checkFetchBtn();document.getElementById('modal').classList.add('show');
     });
@@ -4183,7 +5245,8 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 async function saveEndpoint(){
     const ep_id=document.getElementById('editName').value;
     const publicModel=document.getElementById('fModel').value.trim(),upstreamModel=document.getElementById('fUpstreamModel').value.trim()||publicModel;
-    const d={name:document.getElementById('fName').value.trim(),base_url:document.getElementById('fUrl').value.trim(),api_key:document.getElementById('fKey').value.trim(),model:publicModel,public_model:publicModel,upstream_model:upstreamModel,priority:parseInt(document.getElementById('fPriority').value)||1,timeout:parseInt(document.getElementById('fTimeout').value)||60,max_retries:parseInt(document.getElementById('fRetries').value)||0,cooldown_minutes:parseInt(document.getElementById('fCooldown').value)||0,enabled:document.getElementById('fEnabled').value==='true',daily_limit:parseInt(document.getElementById('fDailyLimit').value)||0,rpm_limit:parseInt(document.getElementById('fRpmLimit').value)||0,use_proxy:document.getElementById('fProxy').value==='true',protocol:document.getElementById('fProtocol').value||'openai',health_mode:document.getElementById('fHealthMode').value||'chat',is_vision:document.getElementById('fVision').value==='true'};
+    const firstKey=modelKeyMap[publicModel]||keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
+    const d={name:document.getElementById('fName').value.trim(),base_url:document.getElementById('fUrl').value.trim(),api_key:firstKey,model:publicModel,public_model:publicModel,upstream_model:upstreamModel,priority:parseInt(document.getElementById('fPriority').value)||1,timeout:parseInt(document.getElementById('fTimeout').value)||60,max_retries:parseInt(document.getElementById('fRetries').value)||0,cooldown_minutes:parseInt(document.getElementById('fCooldown').value)||0,enabled:document.getElementById('fEnabled').value==='true',daily_limit:parseInt(document.getElementById('fDailyLimit').value)||0,rpm_limit:parseInt(document.getElementById('fRpmLimit').value)||0,use_proxy:document.getElementById('fProxy').value==='true',protocol:document.getElementById('fProtocol').value||'openai',health_mode:document.getElementById('fHealthMode').value||'chat',is_vision:document.getElementById('fVision').value==='true'};
     if(!d.name||!d.base_url||!d.api_key){toast('填写名称/URL/Key','error');return;}
     if(!d.model){toast('选择模型','error');return;}
     if(ep_id){await api('PUT',`/api/endpoints/${encodeURIComponent(ep_id)}`,d);toast('已更新','success');}
@@ -4193,12 +5256,13 @@ async function saveEndpoint(){
 
 async function batchAddEndpoints(){
     const fn=document.getElementById('fName').value.trim();
-    const u=document.getElementById('fUrl').value.trim(),k=document.getElementById('fKey').value.trim();
+    const u=document.getElementById('fUrl').value.trim();
+    const firstKey=keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
     const sp=parseInt(document.getElementById('fPriority').value)||1,to=parseInt(document.getElementById('fTimeout').value)||60,re=parseInt(document.getElementById('fRetries').value)||0,cd=parseInt(document.getElementById('fCooldown').value)||5,dl=parseInt(document.getElementById('fDailyLimit').value)||0,rl=parseInt(document.getElementById('fRpmLimit').value)||0,up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai',hm=document.getElementById('fHealthMode').value||'chat';
-    if(!u||!k){toast('填写 URL 和 Key','error');return;}
+    if(!u||!firstKey){toast('填写 URL 和 Key','error');return;}
     if(!selectedModels.size){toast('选择模型','error');return;}
     const ms=[...selectedModels];toast(`添加 ${ms.length} 个...`,'info');
-    const r=await api('POST','/api/endpoints/batch',{endpoints:ms.map((m,i)=>({name:fn?fn:m,model:m,priority:sp+i,is_vision:visionResults[m]?visionResults[m].supports_vision:true})),base:{base_url:u,api_key:k,timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm}});
+    const r=await api('POST','/api/endpoints/batch',{endpoints:ms.map((m,i)=>({name:fn?fn:m,model:m,api_key:modelKeyMap[m]||firstKey,priority:sp+i,is_vision:visionResults[m]?visionResults[m].supports_vision:true})),base:{base_url:u,api_key:firstKey,timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm}});
     if(r.ok){toast(`✅ ${r.added} 个`,'success');closeModal();refresh();}else toast('失败','error');
 }
 
@@ -4739,6 +5803,36 @@ async function clearTokenStats() {
     </div>
   </div>
 </div>
+
+<!-- Embeddings 测试面板 -->
+<div id="embeddingsModal" class="modal-overlay">
+  <div class="modal" style="max-width:600px">
+    <h2>🔢 Embeddings 测试</h2>
+    <div class="form-group"><label>模型</label><input type="text" id="embModel" value="text-embedding-3-small" placeholder="text-embedding-3-small"></div>
+    <div class="form-group"><label>输入文本</label><textarea id="embInput" rows="3" style="width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px;resize:vertical;">Hello, AI-Merg!</textarea></div>
+    <div class="form-actions" style="justify-content:flex-start;margin-bottom:12px;">
+      <button class="btn btn-primary" onclick="sendEmbeddings()">发送请求</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('embeddingsModal').style.display='none'">关闭</button>
+    </div>
+    <div id="embResult" style="font-size:12px;font-family:monospace;background:rgba(0,0,0,.3);padding:10px;border-radius:8px;display:none;word-break:break-all;max-height:200px;overflow:auto;"></div>
+  </div>
+</div>
+
+<!-- 图片生成测试面板 -->
+<div id="imagesModal" class="modal-overlay">
+  <div class="modal" style="max-width:600px">
+    <h2>🖼️ 图片生成测试</h2>
+    <div class="form-group"><label>模型</label><input type="text" id="imgModel" value="dall-e-3" placeholder="dall-e-3 / stable-diffusion..."></div>
+    <div class="form-group"><label>Prompt</label><textarea id="imgPrompt" rows="3" style="width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px;resize:vertical;">A beautiful sunset over mountains</textarea></div>
+    <div class="form-group"><label>尺寸</label><select id="imgSize" style="width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px;"><option>1024x1024</option><option>1792x1024</option><option>1024x1792</option><option>512x512</option></select></div>
+    <div class="form-actions" style="justify-content:flex-start;margin-bottom:12px;">
+      <button class="btn btn-primary" onclick="sendImageGen()">生成图片</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('imagesModal').style.display='none'">关闭</button>
+    </div>
+    <div id="imgResult" style="display:none;"></div>
+  </div>
+</div>
+
 </body>
 
 </html>"""
@@ -4771,6 +5865,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        except ConnectionError:
+            pass
+
+    def _send_binary(self, code, data, content_type="application/octet-stream"):
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         except ConnectionError:
             pass
 
@@ -4873,7 +5978,27 @@ class Handler(BaseHTTPRequestHandler):
             security_manager.destroy_session(self.headers.get("Cookie", ""))
             self._send_json(200, {"ok": True}, {"Set-Cookie": self._expired_session_cookie_header()})
             return
-        if cp in ("/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"):
+
+        # audio/transcriptions：multipart/form-data，不走 JSON 解析，直接 raw proxy
+        if cp in ("/v1/audio/transcriptions", "/audio/transcriptions"):
+            if not security_manager.verify_client_api_key(self.headers):
+                self._send_client_unauthorized()
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                raw_body = self.rfile.read(length) if length else b""
+                content_type = self.headers.get("Content-Type", "multipart/form-data")
+                result = pool.forward_raw(raw_body, content_type, "audio/transcriptions")
+                self._send_json(200, result)
+            except AllEndpointsFailed as e:
+                self._send_json(500, {"error": {"message": str(e.errors), "type": "server_error"}})
+            except Exception as e:
+                self._send_json(500, {"error": {"message": str(e), "type": "server_error"}})
+            return
+
+        if cp in ("/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages",
+                  "/v1/embeddings", "/embeddings", "/v1/images/generations", "/images/generations",
+                  "/v1/completions", "/completions", "/v1/audio/speech", "/audio/speech"):
             if not security_manager.verify_client_api_key(self.headers):
                 self._send_client_unauthorized()
                 return
@@ -4882,8 +6007,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self._read_body()
         res = api_handler("POST", self.path, body)
-        
-        if len(res) == 3 and res[2] is True:
+
+        if len(res) == 3 and res[2] == "binary":
+            # 二进制响应（如 audio/speech）
+            code, (bin_data, bin_ctype) = res[0], res[1]
+            self._send_binary(code, bin_data, bin_ctype)
+        elif len(res) == 3 and res[2] is True:
             code, stream_gen = res[0], res[1]
             try:
                 self.send_response(code)
@@ -4891,7 +6020,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "close")
                 self.end_headers()
-                
+
                 for chunk in stream_gen:
                     self.wfile.write(chunk)
                     self.wfile.flush()
@@ -4924,7 +6053,7 @@ def main():
     if sys.stdout.encoding.lower() != 'utf-8':
         try: sys.stdout.reconfigure(encoding='utf-8')
         except: pass
-    port_text = os.environ.get("PORT", "5200")
+    port_text = os.environ.get("PORT", "5100")
     try:
         port = int(port_text)
     except ValueError:
