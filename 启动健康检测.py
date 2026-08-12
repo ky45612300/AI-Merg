@@ -154,7 +154,7 @@ def show_summary():
     print("  - 数据库会在启动时自动清理")
     print("  - 日志记录已优化，不会再出现 200+MB 的情况")
     print("  - 配置去重已完成，从 67 个端点优化到 57 个")
-    print("  - 可访问 http://localhost:5200 查看管理面板")
+    print("  - 可访问 http://localhost:5100 查看管理面板")
     print()
 
 if __name__ == "__main__":

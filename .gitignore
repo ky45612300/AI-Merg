@@ -13,8 +13,18 @@ security_config.json
 # 数据库文件
 token_stats.db
 token_stats.db-journal
+token_stats.db-shm
+token_stats.db-wal
 chat_logs.db
 chat_logs.db-journal
+chat_logs.db-shm
+chat_logs.db-wal
+
+# 运行时文件
+*.pid
+*.log
+logs/
+nul
 
 # 临时脚本
 test_suite.py

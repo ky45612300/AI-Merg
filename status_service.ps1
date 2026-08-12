@@ -1,29 +1,49 @@
 # Show API Pool service status
-# Usage: run  .\status_service.ps1
+# Usage: .\status_service.ps1
 
 $ErrorActionPreference = "SilentlyContinue"
-$Root    = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PidFile = Join-Path $Root "api-pool.pid"
-$Port    = if ($env:PORT) { $env:PORT } else { "5200" }
+$BundledPy = Join-Path $Root ".runtime\python-3.12.5-embed-amd64\python.exe"
 
-$running = $false
-
-if (Test-Path $PidFile) {
-    $spid = (Get-Content $PidFile -Raw).Trim()
-    $proc = Get-Process -Id $spid -ErrorAction SilentlyContinue
-    if ($proc -and $proc.ProcessName -like "python*") {
-        Write-Host "[RUNNING] PID $spid" -ForegroundColor Green
-        $running = $true
-    }
+function Get-ServiceRecord {
+    if (-not (Test-Path $PidFile)) { return $null }
+    $raw = (Get-Content -LiteralPath $PidFile -Raw).Trim()
+    if ($raw -match '^\d+$') { return [pscustomobject]@{ pid = [int]$raw; port = $null } }
+    try { return $raw | ConvertFrom-Json } catch { return $null }
 }
 
-$conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-if ($conns) {
-    Write-Host "[LISTENING] Port $Port (PID $($conns[0].OwningProcess))" -ForegroundColor Green
-    Write-Host "            Dashboard: http://localhost:$Port" -ForegroundColor Cyan
-    $running = $true
-} else {
-    Write-Host "[DOWN] Port $Port not listening" -ForegroundColor DarkGray
+function Get-ProjectProcess([int]$Id) {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$Id" -ErrorAction SilentlyContinue
+    if (-not $proc) { return $null }
+    if ($proc.Name -notlike "python*") { return $null }
+    if ($proc.CommandLine -notmatch '(^|\s)api_pool_server\.py(\s|$)') { return $null }
+    if ($proc.ExecutablePath -ne $BundledPy) { return $null }
+    return $proc
 }
 
-if (-not $running) { Write-Host "Service not running." -ForegroundColor Yellow }
+$record = Get-ServiceRecord
+if (-not $record -or -not $record.pid) {
+    Write-Host "[DOWN] No API Pool service record found." -ForegroundColor DarkGray
+    exit 0
+}
+
+$proc = Get-ProjectProcess -Id ([int]$record.pid)
+if (-not $proc) {
+    Write-Host "[DOWN] Stale service record for PID $($record.pid)." -ForegroundColor DarkGray
+    exit 1
+}
+
+$port = if ($record.port) { [int]$record.port } else { 5100 }
+$conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+    Where-Object { $_.OwningProcess -eq $proc.ProcessId } |
+    Select-Object -First 1
+
+if (-not $conn) {
+    Write-Host "[STARTING] API Pool PID $($proc.ProcessId) has not bound port $port yet." -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host "[RUNNING] API Pool PID $($proc.ProcessId)" -ForegroundColor Green
+Write-Host "[LISTENING] Port $port (PID $($conn.OwningProcess))" -ForegroundColor Green
+Write-Host "            Dashboard: http://localhost:$port" -ForegroundColor Cyan
