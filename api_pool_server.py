@@ -40,11 +40,11 @@ def _make_ssl_ctx() -> ssl.SSLContext:
 
 _SSL_CTX = _make_ssl_ctx()
 
-LATENCY_OK_MAX = 2000     
-LATENCY_SLOW_MAX = 5000   
+LATENCY_OK_MAX = 2000
+LATENCY_SLOW_MAX = 5000
 HEALTH_CHECK_INTERVAL = 600
 HEALTH_STAGGER_MIN = 1.0   # 同站相邻两次探测的最小间隔（秒）
-HEALTH_STAGGER_MAX = 5.0   # 同站相邻两次探测的最大间隔（秒）
+HEALTH_STAGGER_MAX = 15.0  # 同站相邻两次探测的最大间隔（秒）
 
 class LogManager:
     def __init__(self, max_history=300):
@@ -859,7 +859,10 @@ class APIPool:
             except Exception as e:
                 return ep.id, "bad", int((time.time() - t0) * 1000), f"Models接口错误: {e}"[:100]
                 
-        payload = {"model": ep.model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 3}
+        # 随机算术题：绕过中转站反测活策略（避免 ping/hi/你好/1 等常见测活词被封禁）
+        a, b = random.randint(1, 99), random.randint(1, 99)
+        op = random.choice(["+", "-", "*"])
+        payload = {"model": ep.model, "messages": [{"role": "user", "content": f"{a}{op}{b}=?"}], "max_tokens": 5}
         
         # Attempt 1
         t0 = time.time()
@@ -1031,7 +1034,9 @@ class APIPool:
     def _probe_endpoint(self, ep):
         if ep.health_mode == "none" or self.is_station_health_paused(ep):
             return True
-        payload = {"model": ep.upstream_model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 3}
+        a, b = random.randint(1, 99), random.randint(1, 99)
+        op = random.choice(["+", "-", "*"])
+        payload = {"model": ep.upstream_model, "messages": [{"role": "user", "content": f"{a}{op}{b}=?"}], "max_tokens": 5}
         reply, _ = self._try_endpoint(ep, payload, timeout=10, log_usage=False, force_no_retry=True)
         return reply is not None
 
