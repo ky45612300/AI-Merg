@@ -42,9 +42,10 @@ _SSL_CTX = _make_ssl_ctx()
 
 LATENCY_OK_MAX = 2000
 LATENCY_SLOW_MAX = 5000
-HEALTH_CHECK_INTERVAL = 600
-HEALTH_STAGGER_MIN = 1.0   # 同站相邻两次探测的最小间隔（秒）
-HEALTH_STAGGER_MAX = 15.0  # 同站相邻两次探测的最大间隔（秒）
+HEALTH_CHECK_INTERVAL = 1800  # 仅用于 bad 端点的复检间隔：30分钟
+HEALTH_STAGGER_MIN = 5.0      # 启动时同站相邻两次探测的最小间隔（秒）
+HEALTH_STAGGER_MAX = 15.0     # 启动时同站相邻两次探测的最大间隔（秒）
+COOLDOWN_MINUTES_DEFAULT = 15 # 默认冷却时间：15分钟
 
 class LogManager:
     def __init__(self, max_history=300):
@@ -480,7 +481,7 @@ class Endpoint:
     timeout: int = 60
     max_retries: int = 1
     enabled: bool = True
-    cooldown_minutes: int = 5
+    cooldown_minutes: int = 15
     daily_limit: int = 0
     rpm_limit: int = 0
     use_proxy: bool = True
@@ -1041,6 +1042,7 @@ class APIPool:
         return reply is not None
 
     def _cleanup_expired_cooldowns(self):
+        """检查冷却到期的端点，探活通过后恢复"""
         now = time.time()
         expired = []
         with self._lock:
@@ -1048,20 +1050,30 @@ class APIPool:
                 if ep.in_pool and ep._cooldown_until > 0 and ep._cooldown_until <= now and not self.is_station_connect_paused(ep):
                     expired.append(ep)
         for ep in expired:
-            if self._probe_endpoint(ep):
+            # 使用标准健康检测逻辑，尊重 health_mode 设置
+            ep_id, health, latency, error = self._check_one_health(ep)
+
+            if health in ("ok", "slow"):  # 探活通过（含慢速端点）
                 with self._lock:
                     ep._fail_count = 0
                     ep._last_error = ""
                     ep._last_error_ts = 0
                     ep._cooldown_until = 0
-                    ep._health = "ok"
+                    ep._health = health
+                    ep._health_latency_ms = latency
+                    ep._health_last_check = now
+                    ep._health_error = ""
                     ep._transient_count = 0
                     ep._transient_window_start = 0
-                sys_log(f"端点 '{ep.name}' 冷却过期探活通过，已恢复", "INFO")
-            else:
+                sys_log(f"端点 '{ep.name}' 冷却期满探活通过，已恢复", "INFO")
+            else:  # 探活失败
                 with self._lock:
+                    ep._health = health
+                    ep._health_latency_ms = latency
+                    ep._health_last_check = now
+                    ep._health_error = error
                     self._set_cooldown(ep)
-                sys_log(f"端点 '{ep.name}' 冷却过期探活未通过，继续冷却 {ep.cooldown_minutes} 分钟", "WARN")
+                sys_log(f"端点 '{ep.name}' 冷却期满探活未通过，继续冷却 {ep.cooldown_minutes} 分钟", "WARN")
 
     def resolve_model_alias(self, name):
         """按全局映射把对外别名解析为池内真实模型名；无映射时原样返回。"""
@@ -1157,8 +1169,10 @@ class APIPool:
             failed_ep._cooldown_until = time.time() + 30
             sys_log(f"端点 '{failed_ep.name}' 探活失败，短冷却 30 秒", "WARN")
         else:
+            # 请求失败后进入冷却池（时长由端点的 cooldown_minutes 决定）
             self._set_cooldown(failed_ep)
-            sys_log(f"端点 '{failed_ep.name}' 触发冷却机制，下次可用时间在 {failed_ep.cooldown_minutes} 分钟后", "WARN")
+            failed_ep._health = "bad"
+            sys_log(f"端点 '{failed_ep.name}' 请求失败，进入冷却池 {failed_ep.cooldown_minutes} 分钟", "WARN")
         active = self._active_endpoints(requested_model)
         if active:
             for i, ep in enumerate(active):
@@ -2430,57 +2444,56 @@ def ensure_config():
 
 ensure_config()
 
-HEALTH_QUICK_INTERVAL = 60   # 健康状态异常端点快速复检间隔（秒）
-
 def _health_check_loop():
     """
-    智能健康检测：
-    - 每 60 秒：仅对 health==bad 且【不在冷却期】的端点快速复检
-      （冷却中的端点已由 _cleanup_expired_cooldowns 在到期时自动探活，不重复打扰）
-    - 每 600 秒：对所有端点做一次全量检测
+    简化健康检测策略：
+    - 启动时：全量检测一次（已在主线程完成）
+    - 运行时：每 30 分钟仅复检 health==bad 且不在冷却期的端点
+    - 正常端点：不主动检测，依靠请求失败机制触发冷却
+    - 冷却端点：15 分钟后由 _cleanup_expired_cooldowns 自动探活恢复
     """
-    last_full_check = 0
     while True:
-        time.sleep(HEALTH_QUICK_INTERVAL)
+        time.sleep(HEALTH_CHECK_INTERVAL)  # 30分钟
         now = time.time()
         try:
-            if now - last_full_check >= HEALTH_CHECK_INTERVAL:
-                pool.check_all_health()
-                last_full_check = now
-            else:
-                # 只复检 health==bad 且未在冷却期的端点
-                # 冷却中 = 因 429/5xx 触发了惩罚冷却，不应再打扰，等冷却到期自动恢复
+            # 只复检 health==bad 且未在冷却期的端点
+            with pool._lock:
+                bad_eps = [
+                    ep for ep in pool._endpoints
+                    if ep.enabled
+                    and not pool.is_station_health_paused(ep)
+                    and ep.health_mode != "none"
+                    and ep._health == "bad"
+                    and ep._cooldown_until <= now
+                    # 距离上次检测至少10分钟，避免重复
+                    and (now - ep._health_last_check) >= 600
+                ]
+
+            if bad_eps:
+                sys_log(f"定期复检 {len(bad_eps)} 个异常端点 (排除冷却中)...", "INFO")
+                with ThreadPoolExecutor(max_workers=min(len(bad_eps), 5)) as ex:
+                    futures = {ex.submit(pool._check_one_health, ep): ep for ep in bad_eps}
+                    results = []
+                    for fut in as_completed(futures):
+                        try:
+                            results.append(fut.result())
+                        except Exception as e:
+                            results.append((futures[fut].id, "bad", -1, str(e)))
+
+                ts = time.time()
                 with pool._lock:
-                    bad_eps = [
-                        ep for ep in pool._endpoints
-                        if ep.enabled
-                        and not pool.is_station_health_paused(ep)
-                        and ep.health_mode != "none"
-                        and ep._health == "bad"
-                        and ep._cooldown_until <= now   # 排除冷却期端点
-                    ]
-                if bad_eps:
-                    sys_log(f"快速复检 {len(bad_eps)} 个异常端点 (排除冷却中)...", "INFO")
-                    with ThreadPoolExecutor(max_workers=min(len(bad_eps), 5)) as ex:
-                        futures = {ex.submit(pool._check_one_health, ep): ep for ep in bad_eps}
-                        results = []
-                        for fut in as_completed(futures):
-                            try: results.append(fut.result())
-                            except Exception as e: results.append((futures[fut].id, "bad", -1, str(e)))
-                    ts = time.time()
-                    with pool._lock:
-                        id_map = {ep.id: ep for ep in pool._endpoints}
-                        for ep_id, health, latency, error in results:
-                            ep = id_map.get(ep_id)
-                            if ep:
-                                ep._health = health
-                                ep._health_latency_ms = latency
-                                ep._health_last_check = ts
-                                ep._health_error = error
-                    pool._invalidate_cache()
-                    recovered = sum(1 for _, h, _, _ in results if h == "ok")
-                    if recovered:
-                        sys_log(f"快速复检完成：{recovered}/{len(bad_eps)} 个端点已恢复", "INFO")
+                    id_map = {ep.id: ep for ep in pool._endpoints}
+                    for ep_id, health, latency, error in results:
+                        ep = id_map.get(ep_id)
+                        if ep:
+                            ep._health = health
+                            ep._health_latency_ms = latency
+                            ep._health_last_check = ts
+                            ep._health_error = error
+                pool._invalidate_cache()
+                recovered = sum(1 for _, h, _, _ in results if h == "ok")
+                if recovered:
+                    sys_log(f"定期复检完成：{recovered}/{len(bad_eps)} 个端点已恢复", "INFO")
         except Exception as e:
             sys_log(f"健康检测循环异常: {e}", "WARN")
 
@@ -2509,6 +2522,8 @@ def set_expose_upstream_models(val):
 
 _health_thread = threading.Thread(target=_health_check_loop, daemon=True)
 _health_thread.start()
+# 启动时全量检测：每个站点间隔 5-15 秒
+sys_log("启动时进行全量健康检测（站点间随机间隔 5-15 秒）...", "INFO")
 threading.Thread(target=pool.check_all_health, daemon=True).start()
 
 # ── Phase 2: 动态 /v1/models 后台刷新 ──────────────────────────────────────
@@ -3678,7 +3693,7 @@ def api_handler(method, path, body):
                 "public_model": item.get("public_model", item.get("model", "")),
                 "upstream_model": item.get("upstream_model", item.get("model", "")),
                 "priority": item.get("priority", start_priority + i), "timeout": item.get("timeout", base.get("timeout", 60)),
-                "max_retries": item.get("max_retries", base.get("max_retries", 1)), "cooldown_minutes": item.get("cooldown_minutes", base.get("cooldown_minutes", 5)),
+                "max_retries": item.get("max_retries", base.get("max_retries", 1)), "cooldown_minutes": item.get("cooldown_minutes", base.get("cooldown_minutes", 15)),
                 "daily_limit": item.get("daily_limit", base.get("daily_limit", 0)), "rpm_limit": item.get("rpm_limit", base.get("rpm_limit", 0)),
                 "use_proxy": item.get("use_proxy", base.get("use_proxy", True)),
                 "protocol": item.get("protocol", base.get("protocol", "openai")),
@@ -6084,7 +6099,8 @@ def main():
     print(f"  🌐 管理面板访问: http://localhost:{port}")
     print(f"  🔗 客户端 Base URL: http://localhost:{port}/v1")
     print(f"  📋 已加载 {len(pool._endpoints)} 个端点")
-    print(f"  🩺 健康检测: 启动时自动检测 + 每 {HEALTH_CHECK_INTERVAL}秒 复检\n")
+    print(f"  🩺 健康检测: 启动时全量检测（站点间隔5-15秒）+ 每 {HEALTH_CHECK_INTERVAL//60}分钟 复检异常端点")
+    print(f"  ⏱️  冷却策略: 请求失败后进入冷却池，冷却时长由端点配置决定（默认{COOLDOWN_MINUTES_DEFAULT}分钟）\n")
     if security_manager.bootstrap:
         print("  🔐 首次启动安全凭据（请尽快登录后修改）")
         print(f"  👤 管理员账号: {security_manager.bootstrap['username']}")
