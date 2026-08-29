@@ -6,6 +6,7 @@ API Pool — 聚合 API 自动切换模块（GUI 版）
 """
 
 import os
+import sys
 import json
 import time
 import random
@@ -18,6 +19,7 @@ import http.cookies
 import urllib.request
 import urllib.error
 import ssl
+import atexit
 from dataclasses import dataclass, field
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, unquote
@@ -516,6 +518,30 @@ class Endpoint:
     _latency_samples: deque = field(default_factory=lambda: deque(maxlen=50), repr=False)
 
 
+@dataclass
+class ModelGroup:
+    """模型分组：把多个模型名按顺序串成一条降级链，对外只暴露一个统一模型名。
+
+    members 是有序的模型名列表（对外 public_model 名，非端点 ID）：
+    排在前面的模型先被尝试，该模型名下的所有端点都不可用时才顺延到下一个模型。
+    每个模型名内部仍沿用现有的优先级/健康层/粘连/冷却机制，不改变单模型路由行为。
+    """
+    id: str = ""
+    name: str = ""
+    public_model: str = ""
+    members: list = field(default_factory=list)
+    enabled: bool = True
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "public_model": self.public_model,
+            "members": list(self.members),
+            "enabled": bool(self.enabled),
+        }
+
+
 def station_key(base_url):
     """中转站标识：按 base_url 的域名（host）归组，同一服务商的多个端点视为一个中转站。"""
     try:
@@ -561,6 +587,8 @@ class APIPool:
         self._last_reasoning_content = None
         # 全局模型映射: {对外别名: 池内真实模型}，客户端用别名请求时自动路由
         self.model_aliases = {}
+        # 模型分组: {分组ID: ModelGroup}
+        self.model_groups = {}
         # 中转站级设置: {station_key: {"health_paused": bool, "connect_paused": bool}}
         self.station_settings = {}
         # 健康检测结果缓存（5秒TTL，减少重复计算开销）
@@ -1085,6 +1113,18 @@ class APIPool:
         target = (aliases.get(key) or "").strip()
         return target or key
 
+    def resolve_model_group(self, name):
+        """检查请求的模型名是否是分组的对外模型名，如果是则返回 (group_obj, members_list)；否则返回 (None, None)"""
+        key = (name or "").strip()
+        if not key:
+            return None, None
+        with self._lock:
+            groups = dict(self.model_groups)
+        for gid, group in groups.items():
+            if group.enabled and group.public_model == key:
+                return group, list(group.members)
+        return None, None
+
     def _active_endpoints(self, requested_model=None):
         base = [ep for ep in self._endpoints if not self.is_station_connect_paused(ep)]
         target_model = (requested_model or "").strip()
@@ -1229,6 +1269,46 @@ class APIPool:
         # 全局别名映射：客户端请求别名 → 池内真实模型；响应中仍回显别名
         alias_name = requested_model
         requested_model = self.resolve_model_alias(requested_model)
+
+        # 分组映射：检查是否请求了分组的对外模型名
+        group_obj, group_members = self.resolve_model_group(requested_model)
+        if group_obj and group_members:
+            # 分组路由：按顺序尝试分组内的每个模型名，每个模型名视为独立降级单元
+            sys_log(f"检测到分组请求: {group_obj.name} ({group_obj.public_model}), 成员: {group_members}", "INFO")
+            group_errors = []
+            for member_model in group_members:
+                member_model = (member_model or "").strip()
+                if not member_model:
+                    continue
+                sys_log(f"分组 [{group_obj.name}] 尝试成员模型: {member_model}", "INFO")
+                try:
+                    # 递归调用 chat()，但明确传入成员模型名；响应中的 model 字段会被最后改写为分组的对外名
+                    result = self.chat(messages, model=member_model, extra_payload=extra_payload, timeout=timeout, return_endpoint=return_endpoint)
+                    # 成功：改写响应中的 model 字段为分组对外名
+                    if return_endpoint:
+                        result_data, ep = result
+                        if isinstance(result_data, dict):
+                            result_data["model"] = alias_name or group_obj.public_model
+                        sys_log(f"分组 [{group_obj.name}] 成员 {member_model} 请求成功", "INFO")
+                        return result_data, ep
+                    else:
+                        if isinstance(result, dict):
+                            result["model"] = alias_name or group_obj.public_model
+                        sys_log(f"分组 [{group_obj.name}] 成员 {member_model} 请求成功", "INFO")
+                        return result
+                except (ModelRouteError, AllEndpointsFailed, ValueError) as e:
+                    err_msg = f"[{member_model}] {str(e)}"
+                    group_errors.append(err_msg)
+                    sys_log(f"分组 [{group_obj.name}] 成员 {member_model} 失败: {str(e)}", "WARN")
+                    continue
+            # 分组内所有成员都失败
+            raise ModelRouteError(
+                group_obj.public_model,
+                f"分组 {group_obj.name} 的所有成员模型均不可用: {group_errors}",
+                status=503,
+                error_type="model_group_unavailable"
+            )
+
         target_model = requested_model
 
         # 请求缓存：非流式且无 tools 时检查缓存
@@ -2139,8 +2219,10 @@ class APIPool:
         else:
             return {"ok": False, "status": "bad", "latency_ms": latency, "reply": "", "error": err}
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 CONFIG_FILE = "api_config.json"
 SECURITY_CONFIG_FILE = "security_config.json"
+PID_FILE = os.path.join(BASE_DIR, "api-pool.pid")
 SESSION_COOKIE = "api_pool_session"
 SESSION_MAX_AGE = 24 * 60 * 60
 
@@ -2410,6 +2492,34 @@ def load_model_aliases():
         pass
     return {}
 
+def load_model_groups():
+    """从配置读取分组，返回 {分组ID: ModelGroup}。配置缺失或格式异常时返回空表，不影响原有功能。"""
+    groups = {}
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f).get("model_groups")
+        if not isinstance(raw, list):
+            return groups
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            gid = str(item.get("id") or "").strip()
+            public_model = str(item.get("public_model") or "").strip()
+            if not gid or not public_model:
+                continue
+            members = [str(m).strip() for m in (item.get("members") or []) if str(m).strip()]
+            groups[gid] = ModelGroup(
+                id=gid,
+                name=str(item.get("name") or public_model).strip(),
+                public_model=public_model,
+                members=members,
+                enabled=bool(item.get("enabled", True)),
+            )
+    except Exception:
+        pass
+    return groups
+
+
 def load_station_settings():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -2428,12 +2538,15 @@ def load_expose_upstream_models():
     except Exception:
         return False
 
-def save_config(endpoints_data, station_settings=None, model_aliases=None):
+def save_config(endpoints_data, station_settings=None, model_aliases=None, model_groups=None):
     data = {"api_endpoints": endpoints_data}
     if station_settings:
         data["station_settings"] = station_settings
     if model_aliases:
         data["model_aliases"] = model_aliases
+    if model_groups is not None:
+        # model_groups 是 {gid: ModelGroup} 的 dict，转为 list 存储
+        data["model_groups"] = [g.to_dict() for g in model_groups.values()]
     # 是否把上游全部模型对外展示到 /v1/models（默认关闭，只暴露已选模型+别名）
     data["expose_upstream_models"] = bool(globals().get("EXPOSE_UPSTREAM_MODELS", False))
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -2512,6 +2625,7 @@ pool = APIPool(default_payload={"temperature": 0.7})
 for ep_data in load_config(): pool.add_endpoint(ep_data)
 pool.station_settings = load_station_settings()
 pool.model_aliases = load_model_aliases()
+pool.model_groups = load_model_groups()
 
 # 是否把上游全部模型对外展示到 /v1/models（默认关闭）
 EXPOSE_UPSTREAM_MODELS = load_expose_upstream_models()
@@ -2665,6 +2779,20 @@ def list_openai_models():
             seen.add(alias)
             seen_canon.add(canon_model_key(alias))
             models.append({"id": alias, "object": "model", "created": now, "owned_by": "api-pool"})
+
+    # 分组的对外模型名：只要分组已启用且至少有一个成员模型在池内可路由就展示。
+    # 分组名是用户显式设置的对外名，与别名同理按精确名去重。
+    with pool._lock:
+        groups = list(pool.model_groups.values())
+    for group in groups:
+        pub = (group.public_model or "").strip()
+        if not group.enabled or not pub or pub in seen:
+            continue
+        if not any(canon_model_key(m) in seen_canon for m in group.members):
+            continue
+        seen.add(pub)
+        seen_canon.add(canon_model_key(pub))
+        models.append({"id": pub, "object": "model", "created": now, "owned_by": "api-pool-group"})
 
     # 合并后台动态刷新到的模型（仅在开启"对外展示上游模型"时；默认关闭）
     if EXPOSE_UPSTREAM_MODELS:
@@ -3803,6 +3931,98 @@ def api_handler(method, path, body):
         _sync_to_config()
         sys_log(f"模型映射已更新（{len(cleaned)} 条）", "INFO")
         return 200, {"ok": True, "model_aliases": cleaned}, False
+
+    # ── 模型分组 API ─────────────────────────────────────────────────────────
+    if method == "GET" and cp == "/api/model-groups":
+        with pool._lock:
+            groups = [g.to_dict() for g in pool.model_groups.values()]
+        # 返回可用的池内模型名列表，供前端选择分组成员
+        pool_models = sorted(set(
+            (ep.get("model") or "").strip()
+            for ep in pool.list_endpoints()
+            if ep.get("enabled") and ep.get("in_pool") and (ep.get("model") or "").strip()
+        ))
+        return 200, {"ok": True, "groups": groups, "available_models": pool_models}, False
+
+    if method == "POST" and cp == "/api/model-groups":
+        import uuid
+        name = str(body.get("name") or "").strip()
+        public_model = str(body.get("public_model") or "").strip()
+        members = [str(m).strip() for m in (body.get("members") or []) if str(m).strip()]
+        if not public_model:
+            return 400, {"ok": False, "error": "public_model 不能为空"}, False
+        if not members:
+            return 400, {"ok": False, "error": "成员列表不能为空"}, False
+        # 检查对外模型名是否与现有端点模型或别名冲突
+        pool_models = {(ep.get("model") or "").strip() for ep in pool.list_endpoints() if ep.get("in_pool")}
+        if public_model in pool_models:
+            return 400, {"ok": False, "error": f"对外模型名 {public_model} 与现有端点模型冲突"}, False
+        with pool._lock:
+            if public_model in pool.model_aliases:
+                return 400, {"ok": False, "error": f"对外模型名 {public_model} 与现有别名冲突"}, False
+            # 检查是否与其他分组的对外模型名冲突
+            for g in pool.model_groups.values():
+                if g.public_model == public_model:
+                    return 400, {"ok": False, "error": f"对外模型名 {public_model} 已被分组 {g.name} 使用"}, False
+        new_group = ModelGroup(
+            id=str(uuid.uuid4()),
+            name=name or public_model,
+            public_model=public_model,
+            members=members,
+            enabled=bool(body.get("enabled", True)),
+        )
+        with pool._lock:
+            pool.model_groups[new_group.id] = new_group
+        _sync_to_config()
+        sys_log(f"已创建模型分组: {new_group.name} ({public_model}), 成员: {members}", "INFO")
+        return 201, {"ok": True, "group": new_group.to_dict()}, False
+
+    if method == "PUT" and cp.startswith("/api/model-groups/"):
+        gid = unquote(cp.split("/")[-1])
+        with pool._lock:
+            group = pool.model_groups.get(gid)
+        if not group:
+            return 404, {"ok": False, "error": "分组不存在"}, False
+        name = str(body.get("name") or group.name or "").strip()
+        public_model = str(body.get("public_model") or group.public_model or "").strip()
+        members = body.get("members")
+        if members is not None:
+            members = [str(m).strip() for m in members if str(m).strip()]
+        else:
+            members = list(group.members)
+        enabled = body.get("enabled", group.enabled)
+        if not public_model:
+            return 400, {"ok": False, "error": "public_model 不能为空"}, False
+        if not members:
+            return 400, {"ok": False, "error": "成员列表不能为空"}, False
+        # 检查对外模型名冲突（排除自己）
+        pool_models = {(ep.get("model") or "").strip() for ep in pool.list_endpoints() if ep.get("in_pool")}
+        if public_model != group.public_model and public_model in pool_models:
+            return 400, {"ok": False, "error": f"对外模型名 {public_model} 与现有端点模型冲突"}, False
+        with pool._lock:
+            if public_model != group.public_model and public_model in pool.model_aliases:
+                return 400, {"ok": False, "error": f"对外模型名 {public_model} 与现有别名冲突"}, False
+            for g in pool.model_groups.values():
+                if g.id != gid and g.public_model == public_model:
+                    return 400, {"ok": False, "error": f"对外模型名 {public_model} 已被分组 {g.name} 使用"}, False
+            group.name = name
+            group.public_model = public_model
+            group.members = members
+            group.enabled = bool(enabled)
+        _sync_to_config()
+        sys_log(f"已更新模型分组: {group.name} ({public_model})", "INFO")
+        return 200, {"ok": True, "group": group.to_dict()}, False
+
+    if method == "DELETE" and cp.startswith("/api/model-groups/"):
+        gid = unquote(cp.split("/")[-1])
+        with pool._lock:
+            group = pool.model_groups.pop(gid, None)
+        if not group:
+            return 404, {"ok": False, "error": "分组不存在"}, False
+        _sync_to_config()
+        sys_log(f"已删除模型分组: {group.name} ({group.public_model})", "WARN")
+        return 200, {"ok": True}, False
+
     if method == "POST" and cp == "/api/settings/expose-upstream-models":
         set_expose_upstream_models(body.get("enabled"))
         if not EXPOSE_UPSTREAM_MODELS:
@@ -3825,7 +4045,8 @@ def api_handler(method, path, body):
 def _sync_to_config():
     with pool._lock:
         eps = list(pool._endpoints)
-    save_config([{"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key, "model": ep.model, "public_model": ep.public_model, "upstream_model": ep.upstream_model, "priority": ep.priority, "timeout": ep.timeout, "max_retries": ep.max_retries, "enabled": ep.enabled, "cooldown_minutes": ep.cooldown_minutes, "daily_limit": ep.daily_limit, "rpm_limit": ep.rpm_limit, "use_proxy": ep.use_proxy, "protocol": ep.protocol, "health_mode": ep.health_mode, "billing_mode": ep.billing_mode, "is_vision": ep.is_vision, "in_pool": ep.in_pool} for ep in eps], station_settings=pool.station_settings, model_aliases=pool.model_aliases)
+        groups = dict(pool.model_groups)
+    save_config([{"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key, "model": ep.model, "public_model": ep.public_model, "upstream_model": ep.upstream_model, "priority": ep.priority, "timeout": ep.timeout, "max_retries": ep.max_retries, "enabled": ep.enabled, "cooldown_minutes": ep.cooldown_minutes, "daily_limit": ep.daily_limit, "rpm_limit": ep.rpm_limit, "use_proxy": ep.use_proxy, "protocol": ep.protocol, "health_mode": ep.health_mode, "billing_mode": ep.billing_mode, "is_vision": ep.is_vision, "in_pool": ep.in_pool} for ep in eps], station_settings=pool.station_settings, model_aliases=pool.model_aliases, model_groups=groups)
 
 
 LOGIN_HTML = r"""<!DOCTYPE html>
@@ -4038,7 +4259,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter',system-u
 
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;pointer-events:none;transition:opacity .15s}
 .modal-overlay.show{opacity:1;pointer-events:all}
-.modal{background:var(--card);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:16px;padding:24px;width:560px;max-width:94vw;max-height:88vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,.5)}
+.modal{background:var(--card);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:16px;padding:24px;width:720px;max-width:94vw;max-height:88vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,.5)}
 .modal h2{font-size:16px;margin-bottom:18px;font-weight:700}
 .form-group{margin-bottom:12px}
 .form-group label{display:block;font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
@@ -4056,8 +4277,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter',system-u
 .mb-toolbar label{font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;gap:3px;white-space:nowrap}
 .mb-toolbar .count{font-size:10px;color:var(--text-dim);white-space:nowrap}
 .mb-table{max-height:300px;overflow-y:auto}
-.mb-head{display:grid;grid-template-columns:28px 1fr 72px 80px 70px;gap:6px;padding:6px 10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;font-weight:600;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1}
-.mb-row{display:grid;grid-template-columns:28px 1fr 72px 80px 70px;gap:6px;padding:6px 10px;align-items:center;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px;cursor:pointer;transition:background .08s}
+.mb-head{display:grid;grid-template-columns:28px 1fr 150px 60px 72px 62px;gap:6px;padding:6px 10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;font-weight:600;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1}
+.mb-row{display:grid;grid-template-columns:28px 1fr 150px 60px 72px 62px;gap:6px;padding:6px 10px;align-items:center;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px;cursor:pointer;transition:background .08s}
+.mb-row .alias-cell input{width:100%;padding:3px 6px;background:rgba(0,0,0,.28);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;outline:none}
+.mb-row .alias-cell input:focus{border-color:var(--accent);background:rgba(0,0,0,.5)}
+.mb-row.selected .alias-cell input{background:rgba(0,0,0,.32);border-color:rgba(255,255,255,.35);color:#fff}
+.mb-row .alias-cell input::placeholder{color:var(--text-dim);opacity:.55}
 .mb-row:last-child{border-bottom:none}
 .mb-row:hover{background:var(--card-hover)}
 .mb-row.selected{background:var(--accent);color:#fff}
@@ -4166,23 +4391,19 @@ select option { background: var(--bg); color: var(--text); }
       </span>
     </div>
   </div>
-</div>
-
-
-<div class="api-info-card">
-  <div style="font-size: 13px; font-weight: 700; color: var(--accent-light); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">🔀 模型映射 (Model Aliases)</div>
-  <div id="aliasList" class="alias-list" aria-label="模型映射列表"></div>
-  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px;margin-top:10px;">
-    <input type="text" id="aliasName" placeholder="对外别名，如 gpt-4o" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#fff;outline:none;font-size:13px;min-width:180px;">
-    <span style="color:var(--text-dim);">→</span>
-    <select id="aliasTarget" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#fff;outline:none;font-size:13px;min-width:200px;"></select>
-    <button class="key-action-btn" onclick="addModelAlias()" title="添加映射">添加</button>
-  </div>
-  <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">客户端用别名请求时，自动路由到映射的池内模型（同模型多上游仍自动故障转移），响应中的模型名保持为别名；别名也会出现在 /v1/models 列表中。</div>
   <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-top:12px;cursor:pointer;">
     <input type="checkbox" id="exposeUpstreamModels" onchange="toggleExposeUpstream()" style="width:16px;height:16px;cursor:pointer;">
-    <span>对外展示上游全部模型（关闭时 /v1/models 只显示已选模型和别名，推荐关闭以保持列表干净）</span>
+    <span>对外展示上游全部模型</span>
   </label>
+</div>
+
+<div class="api-info-card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <div style="font-size: 13px; font-weight: 700; color: var(--accent-light); text-transform: uppercase; letter-spacing: 0.5px;">🔗 模型分组</div>
+    <button class="key-action-btn" onclick="openGroupModal()" title="创建分组">+ 新建分组</button>
+  </div>
+  <div id="groupsList" class="alias-list" aria-label="模型分组列表"></div>
+  <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">分组把多个模型按优先级串联，客户端用对外名请求时依次尝试成员模型。</div>
 </div>
 
 <div class="api-info-card" id="modelUsageCardMain">
@@ -4475,7 +4696,33 @@ select option { background: var(--bg); color: var(--text); }
   </div>
 </div>
 
-
+<div class="modal-overlay" id="groupModal">
+  <div class="modal" style="max-width:560px">
+    <h2 id="groupModalTitle">新建模型分组</h2>
+    <input type="hidden" id="groupEditId">
+    <div class="form-group">
+      <label>对外模型名</label>
+      <input type="text" id="groupPublicModel" placeholder="如 gpt-auto">
+      <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">客户端用这个名字请求，不能与已有模型或别名重复。</div>
+    </div>
+    <div class="form-group">
+      <label>成员模型<span style="font-size:11px;color:var(--text-dim);font-weight:normal">（自上而下依次降级）</span></label>
+      <div class="model-row">
+        <select id="groupMemberPick" style="flex:1"></select>
+        <button class="btn btn-yellow btn-sm" onclick="addGroupMember()">＋ 添加</button>
+      </div>
+      <div id="groupMemberList" style="margin-top:8px"></div>
+    </div>
+    <div class="form-group">
+      <label>启用</label>
+      <select id="groupEnabled"><option value="true">是</option><option value="false">否</option></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeGroupModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveModelGroup()">保存</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-overlay" id="stationEditModal">
   <div class="modal">
@@ -4528,7 +4775,7 @@ async function api(method,path,body){
   return await resp.json();
 }
 
-let allModels=[],selectedModels=new Set(),latencyResults={},visionResults={};
+let allModels=[],selectedModels=new Set(),latencyResults={},visionResults={},modelAliases={};
 let keyList=[{key:''}],modelKeyMap={};
 let epFilter='all',modelPage=1,PP=50;
 let clientApiKeyPlain='';
@@ -4541,52 +4788,174 @@ async function refresh(){
   loadModelTokenStats();
 }
 
-
-let _modelAliases={};
-async function loadModelAliases(){
+async function loadExposeUpstreamSetting(){
   const r=await api('GET','/api/model-aliases');
   if(!r||r.ok===false)return;
-  _modelAliases=r.model_aliases||{};
-  const list=document.getElementById('aliasList');
-  const entries=Object.entries(_modelAliases);
-  if(!entries.length){list.innerHTML='<div class="alias-empty">暂无映射</div>';}
-  else{
-    list.innerHTML=entries.map(([a,t])=>`<div class="alias-chip" title="${esc(a)} → ${esc(t)}">
-      <code>${esc(a)}</code><span class="alias-arrow">→</span><code>${esc(t)}</code>
-      <button class="alias-del" onclick="removeModelAlias('${esc(a)}')" title="删除 ${esc(a)}">×</button>
-    </div>`).join('');
-  }
-  const sel=document.getElementById('aliasTarget');
-  const opts=['<option value="">— 选择目标模型 —</option>'];
-  (r.available_models||[]).forEach(m=>{
-    const tag=m.enabled&&m.in_pool?'':' (未启用/池外)';
-    opts.push(`<option value="${esc(m.model)}">${esc(m.model)}${tag}</option>`);
-  });
-  sel.innerHTML=opts.join('');
   const ex=document.getElementById('exposeUpstreamModels');
   if(ex)ex.checked=!!r.expose_upstream_models;
 }
 async function toggleExposeUpstream(){
   const ex=document.getElementById('exposeUpstreamModels');
   const r=await api('POST','/api/settings/expose-upstream-models',{enabled:ex.checked});
-  if(r&&r.ok)toast(ex.checked?'已开启：对外展示上游全部模型':'已关闭：仅展示已选模型和别名','success');
+  if(r&&r.ok)toast(ex.checked?'已开启上游全部模型展示':'已关闭上游全部模型展示','success');
   else{toast(r&&r.error||'设置失败','error');ex.checked=!ex.checked;}
 }
-async function addModelAlias(){
-  const alias=document.getElementById('aliasName').value.trim();
-  const target=document.getElementById('aliasTarget').value;
-  if(!alias){toast('请填写别名','error');return;}
-  if(!target){toast('请选择目标模型','error');return;}
-  const next={..._modelAliases,[alias]:target};
-  const r=await api('POST','/api/model-aliases',{model_aliases:next});
-  if(r&&r.ok){toast('已添加映射：'+alias+' → '+target,'success');document.getElementById('aliasName').value='';loadModelAliases();}
-  else toast(r&&r.error||'添加失败','error');
+
+let _modelGroups=[];
+let _availableModels=[];
+let _editingGroupId=null;
+let _selectedMembers=[];
+
+async function loadModelGroups(){
+  const r=await api('GET','/api/model-groups');
+  if(!r||r.ok===false)return;
+  _modelGroups=r.groups||[];
+  _availableModels=r.available_models||[];
+
+  const list=document.getElementById('groupsList');
+  if(!_modelGroups.length){
+    list.innerHTML='<div class="alias-empty">暂无分组，点击右上角"新建分组"创建</div>';
+  } else {
+    list.innerHTML=_modelGroups.map(g=>{
+      const statusBadge=g.enabled?'<span style="color:var(--green);font-size:11px;">✓</span>':'<span style="color:var(--text-dim);font-size:11px;">✗</span>';
+      const firstMember=g.members[0]?`<code style="font-size:10px;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px;">${esc(g.members[0])}</code>`:'';
+      const more=g.members.length>1?`<span style="font-size:10px;color:var(--text-dim);margin-left:4px;">+${g.members.length-1}</span>`:'';
+      return `<div class="alias-chip" style="align-items:center;padding:8px 12px;cursor:pointer;" title="点击编辑" onclick="editModelGroup('${esc(g.id)}')">
+        <code style="color:var(--green);font-weight:600;font-size:12px;">${esc(g.public_model)}</code>
+        <span style="color:var(--text-dim);font-size:11px;margin:0 4px;">→</span>
+        ${firstMember}${more}
+        ${statusBadge}
+        <button class="alias-del" onclick="event.stopPropagation();deleteModelGroup('${esc(g.id)}','${esc(g.public_model)}')" title="删除" style="margin-left:8px;">×</button>
+      </div>`;
+    }).join('');
+  }
 }
-async function removeModelAlias(alias){
-  const next={..._modelAliases};delete next[alias];
-  const r=await api('POST','/api/model-aliases',{model_aliases:next});
-  if(r&&r.ok){toast('已删除映射：'+alias,'success');loadModelAliases();}
-  else toast(r&&r.error||'删除失败','error');
+
+function openGroupModal(){
+  _editingGroupId=null;
+  _selectedMembers=[];
+  document.getElementById('groupModalTitle').textContent='新建模型分组';
+  document.getElementById('groupEditId').value='';
+  document.getElementById('groupPublicModel').value='';
+  document.getElementById('groupEnabled').value='true';
+
+  const sel=document.getElementById('groupMemberPick');
+  sel.innerHTML='<option value="">— 选择模型 —</option>'+_availableModels.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+
+  renderGroupMemberList();
+  document.getElementById('groupModal').classList.add('show');
+}
+
+function closeGroupModal(){
+  document.getElementById('groupModal').classList.remove('show');
+}
+
+function addGroupMember(){
+  const sel=document.getElementById('groupMemberPick');
+  const model=sel.value;
+  if(!model){toast('请选择模型','error');return;}
+  if(_selectedMembers.includes(model)){toast('该模型已添加','warning');return;}
+  _selectedMembers.push(model);
+  sel.value='';
+  renderGroupMemberList();
+}
+
+function renderGroupMemberList(){
+  const list=document.getElementById('groupMemberList');
+  if(!_selectedMembers.length){
+    list.innerHTML='<div style="font-size:11px;color:var(--text-dim);padding:8px;text-align:center;">尚未添加成员模型</div>';
+    return;
+  }
+  list.innerHTML=_selectedMembers.map((m,i)=>`
+    <div class="group-member-item" draggable="true" data-index="${i}" style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(255,255,255,.05);border-radius:6px;margin-bottom:4px;cursor:move;">
+      <span style="color:var(--accent-light);font-weight:700;min-width:20px;">${i+1}</span>
+      <code style="flex:1;font-size:12px;">${esc(m)}</code>
+      <div style="display:flex;gap:4px;">
+        <button class="btn btn-ghost btn-sm" onclick="moveGroupMember(${i},-1)" ${i===0?'disabled':''} title="上移" style="padding:2px 6px;font-size:11px;">▲</button>
+        <button class="btn btn-ghost btn-sm" onclick="moveGroupMember(${i},1)" ${i===_selectedMembers.length-1?'disabled':''} title="下移" style="padding:2px 6px;font-size:11px;">▼</button>
+        <button class="btn btn-ghost btn-sm" onclick="removeGroupMember(${i})" title="移除" style="padding:2px 8px;font-size:11px;color:var(--red);">×</button>
+      </div>
+    </div>
+  `).join('');
+
+  // 添加拖拽事件
+  const items=list.querySelectorAll('.group-member-item');
+  items.forEach(item=>{
+    item.addEventListener('dragstart',e=>{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',item.dataset.index);});
+    item.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move';});
+    item.addEventListener('drop',e=>{
+      e.preventDefault();
+      const fromIdx=parseInt(e.dataTransfer.getData('text/plain'));
+      const toIdx=parseInt(item.dataset.index);
+      if(fromIdx!==toIdx){
+        const moved=_selectedMembers.splice(fromIdx,1)[0];
+        _selectedMembers.splice(toIdx,0,moved);
+        renderGroupMemberList();
+      }
+    });
+  });
+}
+
+function moveGroupMember(idx,dir){
+  const newIdx=idx+dir;
+  if(newIdx<0||newIdx>=_selectedMembers.length)return;
+  const tmp=_selectedMembers[idx];
+  _selectedMembers[idx]=_selectedMembers[newIdx];
+  _selectedMembers[newIdx]=tmp;
+  renderGroupMemberList();
+}
+
+function removeGroupMember(idx){
+  _selectedMembers.splice(idx,1);
+  renderGroupMemberList();
+}
+
+async function saveModelGroup(){
+  const publicModel=document.getElementById('groupPublicModel').value.trim();
+  const enabled=document.getElementById('groupEnabled').value==='true';
+  if(!publicModel){toast('请填写对外模型名','error');return;}
+  if(_selectedMembers.length===0){toast('请至少添加一个成员模型','error');return;}
+
+  const payload={name:publicModel,public_model:publicModel,members:_selectedMembers,enabled};
+  const method=_editingGroupId?'PUT':'POST';
+  const url=_editingGroupId?`/api/model-groups/${_editingGroupId}`:'/api/model-groups';
+
+  const r=await api(method,url,payload);
+  if(r&&r.ok){
+    toast(_editingGroupId?`已更新分组：${publicModel}`:`已创建分组：${publicModel}`,'success');
+    closeGroupModal();
+    loadModelGroups();
+  } else {
+    toast(r&&r.error||'操作失败','error');
+  }
+}
+
+function editModelGroup(gid){
+  const group=_modelGroups.find(g=>g.id===gid);
+  if(!group)return;
+  _editingGroupId=gid;
+  _selectedMembers=[...group.members];
+  document.getElementById('groupModalTitle').textContent='编辑模型分组';
+  document.getElementById('groupEditId').value=gid;
+  document.getElementById('groupPublicModel').value=group.public_model;
+  document.getElementById('groupEnabled').value=group.enabled?'true':'false';
+
+  const sel=document.getElementById('groupMemberPick');
+  sel.innerHTML='<option value="">— 选择模型 —</option>'+_availableModels.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+
+  renderGroupMemberList();
+  document.getElementById('groupModal').classList.add('show');
+}
+
+async function deleteModelGroup(gid,name){
+  if(!confirm(`确定删除分组"${name}"吗？`))return;
+  const r=await api('DELETE',`/api/model-groups/${gid}`);
+  if(r&&r.ok){
+    toast(`已删除分组：${name}`,'success');
+    loadModelGroups();
+  } else {
+    toast(r&&r.error||'删除失败','error');
+  }
 }
 
 async function loadSecurity(){
@@ -5171,7 +5540,7 @@ function renderModelBrowser(){
       ${isOpenRouter()?`<label><input type="checkbox" id="freeOnly" onchange="modelPage=1;filterModels()"> 🆓免费</label>`:''}
       <span class="count" id="modelCount"></span>
     </div>
-    <div class="mb-head"><span></span><span>模型</span><span style="text-align:center">多模态</span><span>价格</span><span>延迟</span></div>
+    <div class="mb-head"><span></span><span>上游模型</span><span>对外名（映射）</span><span style="text-align:center">多模态</span><span>价格</span><span>延迟</span></div>
     <div class="mb-table" id="modelListInner"></div>
     <div class="pagination" id="modelPagination" style="display:none"></div>
   </div>`;
@@ -5202,9 +5571,11 @@ function filterModels(){
     if(lat){if(lat.status==='ok')lh=`<span class="lat-ok">✓${lat.latency_ms}ms</span>`;else if(lat.status==='slow')lh=`<span class="lat-slow">🐢${lat.latency_ms}ms</span>`;else lh=`<span class="lat-bad">✗${lat.latency_ms}ms</span>`;}
     let ph='';
     if(m.pricing){if(isFreeModel(m))ph='<span class="free-tag">FREE</span>';else ph=`<span style="font-size:10px;color:var(--text-dim)">$${m.pricing.prompt||'0'}/$${m.pricing.completion||'0'}</span>`;}
+    const al=modelAliases[m.id]||'';
     return`<div class="mb-row${sel?' selected':''}" onclick="event.target.tagName!=='INPUT'&&toggleModel('${esc(m.id)}')">
       <input type="checkbox" ${sel?'checked':''} onclick="event.stopPropagation();toggleModel('${esc(m.id)}')">
       <span class="name-cell" title="${esc(m.id)}">${esc(m.id)}</span>
+      <span class="alias-cell">${sel?`<input type="text" value="${esc(al)}" placeholder="${esc(m.id)}" onclick="event.stopPropagation()" oninput="setAlias('${esc(m.id)}',this.value)">`:''}</span>
       <span class="mm-cell">${mm}</span>
       <span class="price-cell">${ph}</span>
       <span class="lat-cell">${lh}</span>
@@ -5222,6 +5593,7 @@ function filterModels(){
 }
 
 function toggleModel(id){selectedModels.has(id)?selectedModels.delete(id):selectedModels.add(id);if(selectedModels.size===1){document.getElementById('fModel').value=[...selectedModels][0];document.getElementById('fUpstreamModel').value=[...selectedModels][0];}else if(!selectedModels.size){document.getElementById('fModel').value='';document.getElementById('fUpstreamModel').value='';}filterModels();}
+function setAlias(upstreamModel,publicModel){modelAliases[upstreamModel]=publicModel.trim();}
 function selectAll(){getFilteredModels().forEach(m=>selectedModels.add(m.id));filterModels();}
 function selectNone(){selectedModels.clear();document.getElementById('fModel').value='';document.getElementById('fUpstreamModel').value='';filterModels();}
 
@@ -5260,7 +5632,7 @@ function openAddModal(){
     document.getElementById('fPriority').value=1;document.getElementById('fTimeout').value=60;document.getElementById('fRetries').value=0;document.getElementById('fCooldown').value=5;document.getElementById('fEnabled').value='true';document.getElementById('fDailyLimit').value=0;document.getElementById('fRpmLimit').value=0;document.getElementById('fProxy').value='true';document.getElementById('fProtocol').value='openai';document.getElementById('fHealthMode').value='chat';document.getElementById('fVision').value='true';
     document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';
     document.getElementById('fetchModelsBtn').disabled=true;document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
-    allModels=[];selectedModels=new Set();latencyResults={};visionResults={};keyList=[{key:''}];modelKeyMap={};
+    allModels=[];selectedModels=new Set();latencyResults={};visionResults={};keyList=[{key:''}];modelKeyMap={};modelAliases={};
     renderKeyList();
     document.getElementById('modal').classList.add('show');
 }
@@ -5271,7 +5643,7 @@ function editEndpoint(id){
         document.getElementById('fPriority').value=ep.priority;document.getElementById('fTimeout').value=ep.timeout;document.getElementById('fRetries').value=ep.max_retries;document.getElementById('fCooldown').value=ep.cooldown_minutes;document.getElementById('fEnabled').value=String(ep.enabled);document.getElementById('fDailyLimit').value=ep.daily_limit||0;document.getElementById('fRpmLimit').value=ep.rpm_limit||0;document.getElementById('fProxy').value=String(ep.use_proxy!==false);document.getElementById('fProtocol').value=ep.protocol||'openai';document.getElementById('fHealthMode').value=ep.health_mode||'chat';document.getElementById('fVision').value=String(ep.is_vision!==false);
         keyList=[{key:ep.api_key_full||''}];modelKeyMap={};renderKeyList();
         document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
-        allModels=[];selectedModels=new Set();latencyResults={};visionResults={};checkFetchBtn();document.getElementById('modal').classList.add('show');
+        allModels=[];selectedModels=new Set();latencyResults={};visionResults={};modelAliases={};checkFetchBtn();document.getElementById('modal').classList.add('show');
     });
 }
 function closeModal(){document.getElementById('modal').classList.remove('show');}
@@ -5296,7 +5668,10 @@ async function batchAddEndpoints(){
     if(!u||!firstKey){toast('填写 URL 和 Key','error');return;}
     if(!selectedModels.size){toast('选择模型','error');return;}
     const ms=[...selectedModels];toast(`添加 ${ms.length} 个...`,'info');
-    const r=await api('POST','/api/endpoints/batch',{endpoints:ms.map((m,i)=>({name:fn?fn:m,model:m,api_key:modelKeyMap[m]||firstKey,priority:sp+i,is_vision:visionResults[m]?visionResults[m].supports_vision:true})),base:{base_url:u,api_key:firstKey,timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm}});
+    const r=await api('POST','/api/endpoints/batch',{endpoints:ms.map((m,i)=>{
+      const publicModel=modelAliases[m]||m;
+      return {name:fn?fn:publicModel,model:publicModel,public_model:publicModel,upstream_model:m,api_key:modelKeyMap[m]||firstKey,priority:sp+i,is_vision:visionResults[m]?visionResults[m].supports_vision:true};
+    }),base:{base_url:u,api_key:firstKey,timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm}});
     if(r.ok){toast(`✅ ${r.added} 个`,'success');closeModal();refresh();}else toast('失败','error');
 }
 
@@ -5715,7 +6090,8 @@ pollLogs();
 
 refresh();
 loadSecurity();
-loadModelAliases();
+loadExposeUpstreamSetting();
+loadModelGroups();
 loadModelTokenStats();
 setInterval(() => {
     refresh();
@@ -6082,6 +6458,28 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(res[0], res[1])
 
 
+def _write_pid_file(port: int) -> None:
+    try:
+        with open(PID_FILE, "w", encoding="ascii") as f:
+            json.dump({"pid": os.getpid(), "port": port}, f, separators=(",", ":"))
+    except OSError as e:
+        print(f"  ⚠️  无法写入 PID 文件: {e}")
+
+
+def _clear_pid_file() -> None:
+    try:
+        with open(PID_FILE, "r", encoding="ascii") as f:
+            rec = json.load(f)
+        if rec.get("pid") != os.getpid():
+            return
+    except (OSError, ValueError):
+        return
+    try:
+        os.remove(PID_FILE)
+    except OSError:
+        pass
+
+
 def main():
     import sys
     if sys.stdout.encoding.lower() != 'utf-8':
@@ -6095,6 +6493,8 @@ def main():
     if not 1 <= port <= 65535:
         raise SystemExit(f"Invalid PORT value: {port}")
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    _write_pid_file(port)
+    atexit.register(_clear_pid_file)
     print(f"\n  ⚡ API Pool 管理面板已启动")
     print(f"  🌐 管理面板访问: http://localhost:{port}")
     print(f"  🔗 客户端 Base URL: http://localhost:{port}/v1")
