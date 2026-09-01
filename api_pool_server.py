@@ -616,6 +616,8 @@ class APIPool:
             self._endpoints.append(ep)
             self._endpoints.sort(key=lambda e: e.priority)
             self._current_idx = 0
+        # 添加后立即异步检测该站点的健康状况
+        threading.Thread(target=self._check_new_endpoint_health, args=(ep.id,), daemon=True).start()
 
     @staticmethod
     def _normalize_model_names(ep):
@@ -625,6 +627,32 @@ class APIPool:
         ep.model = public_model
         ep.public_model = public_model
         ep.upstream_model = upstream_model
+
+    def _check_new_endpoint_health(self, ep_id):
+        """新端点添加后异步检测其健康状况"""
+        time.sleep(random.uniform(1, 3))  # 短暂延迟，避免添加后立即检测
+        with self._lock:
+            ep = next((e for e in self._endpoints if e.id == ep_id), None)
+            if not ep or not ep.enabled or self.is_station_health_paused(ep):
+                return
+            ep._health = "testing"
+        try:
+            result = self._check_one_health(ep)
+            with self._lock:
+                ep = next((e for e in self._endpoints if e.id == ep_id), None)
+                if ep:
+                    ep._health = result[1]
+                    ep._health_latency_ms = result[2]
+                    ep._health_last_check = time.time()
+                    ep._health_error = result[3]
+            sys_log(f"新端点健康检测完成: {ep.name} ({ep.base_url}) → {result[1]}", "INFO")
+        except Exception as e:
+            with self._lock:
+                ep = next((e for e in self._endpoints if e.id == ep_id), None)
+                if ep:
+                    ep._health = "bad"
+                    ep._health_error = str(e)
+            sys_log(f"新端点健康检测失败: {ep.name if ep else ep_id} → {e}", "ERROR")
 
     def remove_endpoint(self, ep_id):
         with self._lock:
