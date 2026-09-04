@@ -616,6 +616,7 @@ class APIPool:
             self._endpoints.append(ep)
             self._endpoints.sort(key=lambda e: e.priority)
             self._current_idx = 0
+        self._invalidate_cache()
         # 添加后立即异步检测该站点的健康状况
         threading.Thread(target=self._check_new_endpoint_health, args=(ep.id,), daemon=True).start()
 
@@ -660,6 +661,7 @@ class APIPool:
             self._current_idx = 0
             if self._manual_override_id == ep_id:
                 self._manual_override_id = None
+        self._invalidate_cache()
 
     def set_enabled(self, ep_id, enabled):
         with self._lock:
@@ -669,6 +671,7 @@ class APIPool:
                     break
             if not enabled and self._manual_override_id == ep_id:
                 self._manual_override_id = None
+        self._invalidate_cache()
 
     def set_pool(self, ep_id, in_pool):
         with self._lock:
@@ -678,6 +681,21 @@ class APIPool:
                     break
             if not in_pool and self._manual_override_id == ep_id:
                 self._manual_override_id = None
+        self._invalidate_cache()
+
+    def has_duplicate_endpoint(self, base_url, upstream_model, exclude_id=None):
+        """判断同一中转站是否已接入相同的上游模型。"""
+        target_station = station_key(base_url)
+        target_model = canon_model_key(upstream_model)
+        if not target_station or not target_model:
+            return False
+        with self._lock:
+            return any(
+                ep.id != exclude_id
+                and station_key(ep.base_url) == target_station
+                and canon_model_key(ep.upstream_model or ep.model) == target_model
+                for ep in self._endpoints
+            )
 
     def switch_to_endpoint(self, ep_id):
         with self._lock:
@@ -773,6 +791,7 @@ class APIPool:
                     self._normalize_model_names(ep)
                     self._endpoints.sort(key=lambda e: e.priority)
                     break
+        self._invalidate_cache()
 
     def list_endpoints(self):
         now = time.time()
@@ -2783,6 +2802,32 @@ def list_openai_models():
     with pool._lock:
         endpoints = list(pool._endpoints)
 
+    # 先收集别名和分组信息，避免被映射的上游模型直接暴露
+    with pool._lock:
+        aliases = dict(pool.model_aliases)
+        groups = list(pool.model_groups.values())
+
+    # 记录所有被别名映射的上游模型归一化键，这些不应该用原始名展示
+    aliased_upstream_canon_keys = set()
+    for upstream, public in aliases.items():
+        upstream = (upstream or "").strip()
+        if upstream:
+            ck = canon_model_key(upstream)
+            if ck:
+                aliased_upstream_canon_keys.add(ck)
+
+    # 记录所有分组成员模型的归一化键，这些模型不应该单独展示
+    group_member_canon_keys = set()
+    for group in groups:
+        if group.enabled:
+            for member in group.members:
+                member = (member or "").strip()
+                if member:
+                    ck = canon_model_key(member)
+                    if ck:
+                        group_member_canon_keys.add(ck)
+
+    # 展示端点的原始模型名，但排除已被映射或分组的成员模型
     for ep in endpoints:
         model = (ep.model or "").strip()
         if not ep.enabled or not ep.in_pool or not model:
@@ -2790,33 +2835,59 @@ def list_openai_models():
         ck = canon_model_key(model)
         if not ck or ck in seen_canon:
             continue
+        # 如果该模型被别名映射或是分组成员，则不以原始名展示
+        if ck in aliased_upstream_canon_keys or ck in group_member_canon_keys:
+            continue
         seen_canon.add(ck)
         seen.add(model)
         models.append({"id": model, "object": "model", "created": now, "owned_by": "api-pool"})
 
-    # 仅展示指向已启用、已入池模型的别名，避免旧配置暴露池外模型。
-    # 别名是用户有意设置的对外名，按归一化键判断目标是否在池内；别名本身按精确名去重、不做归一化合并。
-    with pool._lock:
-        aliases = dict(pool.model_aliases)
-    for alias, target in aliases.items():
-        alias = (alias or "").strip()
-        target = (target or "").strip()
-        if not alias or alias in seen:
+    # 展示别名映射后的对外名：多个上游模型可映射到同一个对外名（按归一化键去重）
+    # 只要别名目标在池内（已展示、被映射或在分组中），就展示该别名
+    for upstream, public in aliases.items():
+        upstream = (upstream or "").strip()
+        public = (public or "").strip()
+        if not public:
             continue
-        if canon_model_key(target) in seen_canon:
-            seen.add(alias)
-            seen_canon.add(canon_model_key(alias))
-            models.append({"id": alias, "object": "model", "created": now, "owned_by": "api-pool"})
+
+        # 检查别名是否已经被展示过（精确名或归一化名）
+        public_ck = canon_model_key(public)
+        if public in seen or public_ck in seen_canon:
+            continue
+
+        # 检查上游模型是否在池内
+        upstream_ck = canon_model_key(upstream)
+        is_valid = False
+        for ep in endpoints:
+            if ep.enabled and ep.in_pool and canon_model_key(ep.model or "") == upstream_ck:
+                is_valid = True
+                break
+
+        if is_valid:
+            seen.add(public)
+            seen_canon.add(public_ck)
+            models.append({"id": public, "object": "model", "created": now, "owned_by": "api-pool"})
 
     # 分组的对外模型名：只要分组已启用且至少有一个成员模型在池内可路由就展示。
     # 分组名是用户显式设置的对外名，与别名同理按精确名去重。
-    with pool._lock:
-        groups = list(pool.model_groups.values())
     for group in groups:
         pub = (group.public_model or "").strip()
         if not group.enabled or not pub or pub in seen:
             continue
-        if not any(canon_model_key(m) in seen_canon for m in group.members):
+        # 检查是否至少有一个成员模型在池内
+        has_valid_member = False
+        for member in group.members:
+            member = (member or "").strip()
+            if member:
+                member_ck = canon_model_key(member)
+                # 成员模型需要在端点中存在且已启用
+                for ep in endpoints:
+                    if ep.enabled and ep.in_pool and canon_model_key(ep.model or "") == member_ck:
+                        has_valid_member = True
+                        break
+            if has_valid_member:
+                break
+        if not has_valid_member:
             continue
         seen.add(pub)
         seen_canon.add(canon_model_key(pub))
@@ -3838,9 +3909,14 @@ def api_handler(method, path, body):
         ep_id = unquote(cp.split("/")[-1])
         return 200, {"ok": pool.switch_to_endpoint(ep_id)}, False
     if method == "POST" and cp == "/api/endpoints":
+        base_url = str(body.get("base_url") or "").strip()
+        upstream_model = str(body.get("upstream_model") or body.get("model") or "").strip()
+        if pool.has_duplicate_endpoint(base_url, upstream_model):
+            return 409, {"ok": False, "error": "该中转站已接入相同的上游模型"}, False
         pool.add_endpoint(body); _sync_to_config(); return 201, {"ok": True}, False
     if method == "POST" and cp == "/api/endpoints/batch":
-        items = body.get("endpoints", []); base = body.get("base", {}); added = 0; start_priority = base.get("start_priority", 1)
+        items = body.get("endpoints", []); base = body.get("base", {}); added = 0; skipped = []
+        start_priority = base.get("start_priority", 1)
         for i, item in enumerate(items):
             ep = {
                 "name": item.get("name", base.get("name", f"ep_{i}")), "base_url": item.get("base_url", base.get("base_url", "")),
@@ -3857,15 +3933,26 @@ def api_handler(method, path, body):
                 "billing_mode": item.get("billing_mode", base.get("billing_mode", "subscription")),
                 "is_vision": item.get("is_vision", base.get("is_vision", True)),
                 "in_pool": item.get("in_pool", base.get("in_pool", True)),
-                "enabled": item.get("enabled", True),
+                "enabled": item.get("enabled", base.get("enabled", True)),
             }
-            if ep["model"]: pool.add_endpoint(ep); added += 1
-        _sync_to_config(); return 201, {"ok": True, "added": added}, False
+            if not ep["model"]:
+                continue
+            if pool.has_duplicate_endpoint(ep["base_url"], ep["upstream_model"]):
+                skipped.append(ep["upstream_model"])
+                continue
+            pool.add_endpoint(ep); added += 1
+        _sync_to_config(); return 201, {"ok": True, "added": added, "skipped": skipped}, False
     if method == "PUT" and cp.startswith("/api/endpoints/") and not cp.endswith("/toggle"):
         ep_id = unquote(cp.split("/")[-1])
-        new_name = body.get("name")
         old_ep = next((e for e in pool.list_endpoints() if e["id"] == ep_id), None)
-        if old_ep and new_name and new_name != old_ep["name"]:
+        if not old_ep:
+            return 404, {"ok": False, "error": "端点不存在"}, False
+        new_name = body.get("name")
+        base_url = str(body.get("base_url", old_ep["base_url"]) or "").strip()
+        upstream_model = str(body.get("upstream_model", old_ep.get("upstream_model") or old_ep["model"]) or "").strip()
+        if pool.has_duplicate_endpoint(base_url, upstream_model, exclude_id=ep_id):
+            return 409, {"ok": False, "error": "该中转站已接入相同的上游模型"}, False
+        if new_name and new_name != old_ep["name"]:
             token_tracker.rename_endpoint(old_ep["name"], new_name)
         pool.update_endpoint(ep_id, body); _sync_to_config(); return 200, {"ok": True}, False
     if method == "DELETE" and cp.startswith("/api/endpoints/"):
@@ -4307,6 +4394,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter',system-u
 .mb-table{max-height:300px;overflow-y:auto}
 .mb-head{display:grid;grid-template-columns:28px 1fr 150px 60px 72px 62px;gap:6px;padding:6px 10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;font-weight:600;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1}
 .mb-row{display:grid;grid-template-columns:28px 1fr 150px 60px 72px 62px;gap:6px;padding:6px 10px;align-items:center;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px;cursor:pointer;transition:background .08s}
+.mb-row.existing{opacity:.42;cursor:not-allowed;background:rgba(255,255,255,.015)}
+.mb-row.existing:hover{background:rgba(255,255,255,.015)}
+.mb-row.existing .name-cell{color:var(--text-dim)}
+.mb-row.existing input[type=checkbox]{cursor:not-allowed}
+.existing-tag{display:inline-block;margin-left:6px;padding:1px 5px;border:1px solid rgba(255,255,255,.16);border-radius:4px;color:var(--text-dim);font-size:9px;line-height:1.3;vertical-align:1px}
 .mb-row .alias-cell input{width:100%;padding:3px 6px;background:rgba(0,0,0,.28);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;outline:none}
 .mb-row .alias-cell input:focus{border-color:var(--accent);background:rgba(0,0,0,.5)}
 .mb-row.selected .alias-cell input{background:rgba(0,0,0,.32);border-color:rgba(255,255,255,.35);color:#fff}
@@ -4809,6 +4901,24 @@ let epFilter='all',modelPage=1,PP=50;
 let clientApiKeyPlain='';
 let stationFilter='';
 let _stations=[];
+let existingModels=new Set(); // 当前中转站已接入的上游模型归一化名
+
+function canonicalModelKey(name){return String(name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'');}
+function isExistingModel(model){return existingModels.has(canonicalModelKey(model));}
+async function loadExistingStationModels(){
+  existingModels.clear();
+  const currentStation=stationKeyOf(document.getElementById('fUrl').value.trim());
+  if(!currentStation)return;
+  const eps=await api('GET','/api/endpoints');
+  if(!Array.isArray(eps))return;
+  const editingId=document.getElementById('editName').value;
+  eps.forEach(ep=>{
+    if(ep.id!==editingId&&stationKeyOf(ep.base_url)===currentStation){
+      const key=canonicalModelKey(ep.upstream_model||ep.model);
+      if(key)existingModels.add(key);
+    }
+  });
+}
 
 async function refresh(){
   const[eps,chain,stations]=await Promise.all([api('GET','/api/endpoints'),api('GET','/api/chain'),api('GET','/api/stations')]);
@@ -5363,7 +5473,7 @@ function renderChain(chain){
     else rh='<div class="chain-health" style="color:var(--text-dim)">-</div>';
     const conn=isLast?'':'<div class="chain-connector"></div>';
     const vis=(it.is_vision!==false)?'<span class="badge" style="background:rgba(0,122,255,.15);color:#0a84ff" title="支持原生视觉">👁️视觉</span>':'';
-    return`<div class="${cls}"><div class="chain-dot"></div><div class="chain-info"><div class="name">${esc(it.name)} ${st}</div><div class="model">${esc(it.model)} ${vis}</div></div><div class="chain-right">${rh}</div></div>${conn}`;
+    return`<div class="${cls}"><div class="chain-dot"></div><div class="chain-info"><div class="name">${esc(it.name)} ${st}</div><div class="model">${esc(it.upstream_model||it.model)} ${vis}</div></div><div class="chain-right">${rh}</div></div>${conn}`;
   };
   let html=normal.map((it,i)=>_chainItem(it,i===normal.length-1&&!bad.length)).join('');
   if(bad.length){
@@ -5531,6 +5641,9 @@ async function fetchModelsForKeyIdx(idx){
   const up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai';
   if(!u||!k){toast('填写 URL 和 Key','error');return;}
   const btn=document.getElementById('keyFetchBtn'+idx);if(btn){btn.disabled=true;btn.innerHTML='⏳';}
+
+  await loadExistingStationModels();
+
   try{
     const r=await api('POST','/api/fetch-models',{base_url:u,api_key:k,use_proxy:up,protocol:pt});
     if(r.ok&&r.models?.length){
@@ -5547,6 +5660,9 @@ async function fetchAllKeys(){
   if(!u){toast('填写 Base URL','error');return;}
   const keys=keyList.filter(kv=>kv.key.trim());
   if(!keys.length){toast('填写至少一个 Key','error');return;}
+
+  await loadExistingStationModels();
+
   allModels=[];modelKeyMap={};selectedModels=new Set();latencyResults={};visionResults={};modelPage=1;
   const b=document.getElementById('fetchModelsBtn');b.disabled=true;b.innerHTML='⏳';
   for(let i=0;i<keyList.length;i++){if(keyList[i].key.trim())await fetchModelsForKeyIdx(i);}
@@ -5600,9 +5716,10 @@ function filterModels(){
     let ph='';
     if(m.pricing){if(isFreeModel(m))ph='<span class="free-tag">FREE</span>';else ph=`<span style="font-size:10px;color:var(--text-dim)">$${m.pricing.prompt||'0'}/$${m.pricing.completion||'0'}</span>`;}
     const al=modelAliases[m.id]||'';
-    return`<div class="mb-row${sel?' selected':''}" onclick="event.target.tagName!=='INPUT'&&toggleModel('${esc(m.id)}')">
-      <input type="checkbox" ${sel?'checked':''} onclick="event.stopPropagation();toggleModel('${esc(m.id)}')">
-      <span class="name-cell" title="${esc(m.id)}">${esc(m.id)}</span>
+    const isExisting=isExistingModel(m.id);
+    return`<div class="mb-row${sel?' selected':''}${isExisting?' existing':''}" onclick="event.target.tagName!=='INPUT'&&toggleModel('${esc(m.id)}')">
+      <input type="checkbox" ${sel?'checked':''} ${isExisting?'disabled':''} onclick="event.stopPropagation();toggleModel('${esc(m.id)}')">
+      <span class="name-cell" title="${esc(m.id)}">${esc(m.id)}${isExisting?' <span class="existing-tag">已接入</span>':''}</span>
       <span class="alias-cell">${sel?`<input type="text" value="${esc(al)}" placeholder="${esc(m.id)}" onclick="event.stopPropagation()" oninput="setAlias('${esc(m.id)}',this.value)">`:''}</span>
       <span class="mm-cell">${mm}</span>
       <span class="price-cell">${ph}</span>
@@ -5620,9 +5737,29 @@ function filterModels(){
   updateBatchBar();
 }
 
-function toggleModel(id){selectedModels.has(id)?selectedModels.delete(id):selectedModels.add(id);if(selectedModels.size===1){document.getElementById('fModel').value=[...selectedModels][0];document.getElementById('fUpstreamModel').value=[...selectedModels][0];}else if(!selectedModels.size){document.getElementById('fModel').value='';document.getElementById('fUpstreamModel').value='';}filterModels();}
+function toggleModel(id){
+  if(isExistingModel(id)){toast('该模型已接入当前中转站','info');return;}
+  const wasSelected=selectedModels.has(id);
+  if(wasSelected){
+    selectedModels.delete(id);
+  }else{
+    selectedModels.add(id);
+    // 新勾选时：如果该模型还没有映射名，自动填充为模型名本身
+    if(!modelAliases[id]){
+      modelAliases[id]=id;
+    }
+  }
+  if(selectedModels.size===1){
+    document.getElementById('fModel').value=[...selectedModels][0];
+    document.getElementById('fUpstreamModel').value=[...selectedModels][0];
+  }else if(!selectedModels.size){
+    document.getElementById('fModel').value='';
+    document.getElementById('fUpstreamModel').value='';
+  }
+  filterModels();
+}
 function setAlias(upstreamModel,publicModel){modelAliases[upstreamModel]=publicModel.trim();}
-function selectAll(){getFilteredModels().forEach(m=>selectedModels.add(m.id));filterModels();}
+function selectAll(){getFilteredModels().filter(m=>!isExistingModel(m.id)).forEach(m=>selectedModels.add(m.id));filterModels();}
 function selectNone(){selectedModels.clear();document.getElementById('fModel').value='';document.getElementById('fUpstreamModel').value='';filterModels();}
 
 function updateBatchBar(){
@@ -5662,6 +5799,8 @@ function openAddModal(){
     document.getElementById('fetchModelsBtn').disabled=true;document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
     allModels=[];selectedModels=new Set();latencyResults={};visionResults={};keyList=[{key:''}];modelKeyMap={};modelAliases={};
     renderKeyList();
+    // 添加新端点时，清空已存在模型集合
+    existingModels.clear();
     document.getElementById('modal').classList.add('show');
 }
 function editEndpoint(id){
@@ -5671,7 +5810,8 @@ function editEndpoint(id){
         document.getElementById('fPriority').value=ep.priority;document.getElementById('fTimeout').value=ep.timeout;document.getElementById('fRetries').value=ep.max_retries;document.getElementById('fCooldown').value=ep.cooldown_minutes;document.getElementById('fEnabled').value=String(ep.enabled);document.getElementById('fDailyLimit').value=ep.daily_limit||0;document.getElementById('fRpmLimit').value=ep.rpm_limit||0;document.getElementById('fProxy').value=String(ep.use_proxy!==false);document.getElementById('fProtocol').value=ep.protocol||'openai';document.getElementById('fHealthMode').value=ep.health_mode||'chat';document.getElementById('fVision').value=String(ep.is_vision!==false);
         keyList=[{key:ep.api_key_full||''}];modelKeyMap={};renderKeyList();
         document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
-        allModels=[];selectedModels=new Set();latencyResults={};visionResults={};modelAliases={};checkFetchBtn();document.getElementById('modal').classList.add('show');
+        allModels=[];selectedModels=new Set();latencyResults={};visionResults={};modelAliases={};existingModels.clear();
+        checkFetchBtn();document.getElementById('modal').classList.add('show');
     });
 }
 function closeModal(){document.getElementById('modal').classList.remove('show');}
@@ -5679,12 +5819,13 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 async function saveEndpoint(){
     const ep_id=document.getElementById('editName').value;
     const publicModel=document.getElementById('fModel').value.trim(),upstreamModel=document.getElementById('fUpstreamModel').value.trim()||publicModel;
-    const firstKey=modelKeyMap[publicModel]||keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
+    const firstKey=modelKeyMap[upstreamModel]||keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
     const d={name:document.getElementById('fName').value.trim(),base_url:document.getElementById('fUrl').value.trim(),api_key:firstKey,model:publicModel,public_model:publicModel,upstream_model:upstreamModel,priority:parseInt(document.getElementById('fPriority').value)||1,timeout:parseInt(document.getElementById('fTimeout').value)||60,max_retries:parseInt(document.getElementById('fRetries').value)||0,cooldown_minutes:parseInt(document.getElementById('fCooldown').value)||0,enabled:document.getElementById('fEnabled').value==='true',daily_limit:parseInt(document.getElementById('fDailyLimit').value)||0,rpm_limit:parseInt(document.getElementById('fRpmLimit').value)||0,use_proxy:document.getElementById('fProxy').value==='true',protocol:document.getElementById('fProtocol').value||'openai',health_mode:document.getElementById('fHealthMode').value||'chat',is_vision:document.getElementById('fVision').value==='true'};
     if(!d.name||!d.base_url||!d.api_key){toast('填写名称/URL/Key','error');return;}
     if(!d.model){toast('选择模型','error');return;}
-    if(ep_id){await api('PUT',`/api/endpoints/${encodeURIComponent(ep_id)}`,d);toast('已更新','success');}
-    else{await api('POST','/api/endpoints',d);toast('已添加','success');}
+    const r=await api(ep_id?'PUT':'POST',ep_id?`/api/endpoints/${encodeURIComponent(ep_id)}`:'/api/endpoints',d);
+    if(!r||!r.ok){toast(r?.error||'保存失败','error');return;}
+    toast(ep_id?'已更新':'已添加','success');
     closeModal();refresh();
 }
 
@@ -5692,15 +5833,19 @@ async function batchAddEndpoints(){
     const fn=document.getElementById('fName').value.trim();
     const u=document.getElementById('fUrl').value.trim();
     const firstKey=keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
-    const sp=parseInt(document.getElementById('fPriority').value)||1,to=parseInt(document.getElementById('fTimeout').value)||60,re=parseInt(document.getElementById('fRetries').value)||0,cd=parseInt(document.getElementById('fCooldown').value)||5,dl=parseInt(document.getElementById('fDailyLimit').value)||0,rl=parseInt(document.getElementById('fRpmLimit').value)||0,up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai',hm=document.getElementById('fHealthMode').value||'chat';
+    const sp=parseInt(document.getElementById('fPriority').value)||1,to=parseInt(document.getElementById('fTimeout').value)||60,re=parseInt(document.getElementById('fRetries').value)||0,cd=parseInt(document.getElementById('fCooldown').value)||5,dl=parseInt(document.getElementById('fDailyLimit').value)||0,rl=parseInt(document.getElementById('fRpmLimit').value)||0,up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai',hm=document.getElementById('fHealthMode').value||'chat',en=document.getElementById('fEnabled').value==='true',defaultVision=document.getElementById('fVision').value==='true';
     if(!u||!firstKey){toast('填写 URL 和 Key','error');return;}
-    if(!selectedModels.size){toast('选择模型','error');return;}
-    const ms=[...selectedModels];toast(`添加 ${ms.length} 个...`,'info');
+    const ms=[...selectedModels].filter(m=>!isExistingModel(m));
+    if(!ms.length){toast('没有可添加的新模型','info');return;}
+    toast(`添加 ${ms.length} 个...`,'info');
     const r=await api('POST','/api/endpoints/batch',{endpoints:ms.map((m,i)=>{
       const publicModel=modelAliases[m]||m;
-      return {name:fn?fn:publicModel,model:publicModel,public_model:publicModel,upstream_model:m,api_key:modelKeyMap[m]||firstKey,priority:sp+i,is_vision:visionResults[m]?visionResults[m].supports_vision:true};
-    }),base:{base_url:u,api_key:firstKey,timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm}});
-    if(r.ok){toast(`✅ ${r.added} 个`,'success');closeModal();refresh();}else toast('失败','error');
+      return {name:fn?fn:publicModel,model:publicModel,public_model:publicModel,upstream_model:m,api_key:modelKeyMap[m]||firstKey,priority:sp+i,enabled:en,is_vision:visionResults[m]?.supports_vision??defaultVision};
+    }),base:{base_url:u,api_key:firstKey,timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm,enabled:en}});
+    if(r.ok){
+      const skipped=r.skipped?.length?`，跳过 ${r.skipped.length} 个重复模型`:'';
+      toast(`已添加 ${r.added} 个${skipped}`,'success');closeModal();refresh();
+    }else toast(r.error||'失败','error');
 }
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
