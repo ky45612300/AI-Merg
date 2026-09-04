@@ -1,0 +1,18 @@
+{
+  "admin_username": "admin",
+  "password": {
+    "salt": "8aecd4c36b905bd2a9e28b60af73f2c5",
+    "hash": "f5f86b3200c109645af83dca3437f05039edb9508a5bcba9f06da4580753337f",
+    "iterations": 200000
+  },
+  "client_api_keys": [
+    {
+      "id": "default",
+      "name": "默认 Key",
+      "hash": "e7ced29bb40c349c842353874271dfa210cc43c53f275cf48aebe486481f8624",
+      "hint": "sk-apipo...HMUt4o",
+      "plain": "sk-apipool-d9erShCWgz7a6YXHMekcAQu9YYLKUUH5i-185HMUt4o",
+      "enabled": true
+    }
+  ]
+}

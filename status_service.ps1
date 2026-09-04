@@ -18,7 +18,6 @@ function Get-ProjectProcess([int]$Id) {
     if (-not $proc) { return $null }
     if ($proc.Name -notlike "python*") { return $null }
     if ($proc.CommandLine -notmatch '(^|\s)api_pool_server\.py(\s|$)') { return $null }
-    if ($proc.ExecutablePath -ne $BundledPy) { return $null }
     return $proc
 }
 

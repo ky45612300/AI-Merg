@@ -1,0 +1,53 @@
+{
+  "api_endpoints": [
+    {
+      "id": "",
+      "name": "示例-GPT端点",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-YOUR_API_KEY_HERE",
+      "api_keys": [],
+      "model": "gpt-4o",
+      "public_model": "",
+      "upstream_model": "",
+      "priority": 1,
+      "timeout": 60,
+      "max_retries": 0,
+      "enabled": true,
+      "cooldown_minutes": 15,
+      "daily_limit": 0,
+      "rpm_limit": 0,
+      "use_proxy": false,
+      "protocol": "openai",
+      "extra_headers": {},
+      "is_vision": true,
+      "in_pool": true,
+      "billing_mode": "subscription",
+      "health_mode": "chat"
+    },
+    {
+      "id": "",
+      "name": "示例-Claude端点",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key": "sk-ant-EXAMPLE_KEY",
+      "api_keys": [],
+      "model": "claude-opus-4",
+      "public_model": "claude-opus-4",
+      "upstream_model": "claude-opus-4",
+      "priority": 2,
+      "timeout": 90,
+      "max_retries": 1,
+      "enabled": true,
+      "cooldown_minutes": 10,
+      "daily_limit": 0,
+      "rpm_limit": 0,
+      "use_proxy": false,
+      "protocol": "anthropic",
+      "extra_headers": {},
+      "is_vision": true,
+      "in_pool": true,
+      "billing_mode": "subscription",
+      "health_mode": "chat"
+    }
+  ],
+  "expose_upstream_models": false
+}

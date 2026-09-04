@@ -48,6 +48,7 @@ HEALTH_CHECK_INTERVAL = 1800  # 仅用于 bad 端点的复检间隔：30分钟
 HEALTH_STAGGER_MIN = 5.0      # 启动时同站相邻两次探测的最小间隔（秒）
 HEALTH_STAGGER_MAX = 15.0     # 启动时同站相邻两次探测的最大间隔（秒）
 COOLDOWN_MINUTES_DEFAULT = 15 # 默认冷却时间：15分钟
+KEY_COOLDOWN_MINUTES_DEFAULT = 15 # 单个 API Key 失败后的默认冷却时间
 
 class LogManager:
     def __init__(self, max_history=300):
@@ -476,6 +477,8 @@ class Endpoint:
     name: str = "unnamed"
     base_url: str = ""
     api_key: str = ""
+    # 有序上游 Key 列表；api_key 保留为首个 Key 的旧配置兼容字段
+    api_keys: list = field(default_factory=list)
     model: str = "gpt-4o-mini"
     public_model: str = ""
     upstream_model: str = ""
@@ -516,6 +519,10 @@ class Endpoint:
 
     # 性能可视化：实际请求延迟样本（最多保留50个）
     _latency_samples: deque = field(default_factory=lambda: deque(maxlen=50), repr=False)
+
+    # 每个 Key 独立冷却，避免一个失效 Key 阻塞同端点的其他 Key
+    _key_cooldown_until: dict = field(default_factory=dict, repr=False)
+    _key_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
 
 @dataclass
@@ -607,6 +614,7 @@ class APIPool:
         if isinstance(ep, dict):
             ep = Endpoint(**{k: v for k, v in ep.items() if k in Endpoint.__dataclass_fields__})
         self._normalize_model_names(ep)
+        self._normalize_api_keys(ep)
         if not ep.id:
             import uuid
             ep.id = str(uuid.uuid4())
@@ -628,6 +636,104 @@ class APIPool:
         ep.model = public_model
         ep.public_model = public_model
         ep.upstream_model = upstream_model
+
+    @staticmethod
+    def _normalize_api_keys(ep):
+        """统一 Key 配置：保留输入顺序，并兼容旧版单 api_key 配置。"""
+        raw_keys = getattr(ep, "api_keys", None)
+        if not isinstance(raw_keys, (list, tuple)):
+            raw_keys = []
+        keys = []
+        for value in raw_keys:
+            value = str(value or "").strip()
+            if value and value not in keys:
+                keys.append(value)
+        legacy_key = str(getattr(ep, "api_key", "") or "").strip()
+        if legacy_key and legacy_key not in keys:
+            keys.insert(0, legacy_key)
+        ep.api_keys = keys
+        ep.api_key = keys[0] if keys else ""
+        if not isinstance(getattr(ep, "_key_cooldown_until", None), dict):
+            ep._key_cooldown_until = {}
+        # 配置被编辑后，移除已经不存在的 Key 的运行时状态。
+        ep._key_cooldown_until = {
+            key: until for key, until in ep._key_cooldown_until.items() if key in keys
+        }
+
+    @staticmethod
+    def _key_is_cooling(ep, key, now=None):
+        now = time.time() if now is None else now
+        with ep._key_lock:
+            until = ep._key_cooldown_until.get(key, 0)
+            if until and until <= now:
+                ep._key_cooldown_until.pop(key, None)
+                return False
+            return until > now
+
+    def _ordered_available_keys(self, ep):
+        self._normalize_api_keys(ep)
+        now = time.time()
+        return [key for key in ep.api_keys if not self._key_is_cooling(ep, key, now)]
+
+    def _cooldown_key(self, ep, key, reason=""):
+        if not key:
+            return
+        minutes = ep.cooldown_minutes or KEY_COOLDOWN_MINUTES_DEFAULT
+        until = time.time() + max(1, minutes) * 60
+        with ep._key_lock:
+            ep._key_cooldown_until[key] = until
+        self._invalidate_cache_for_key_state(ep)
+        suffix = f" ({reason})" if reason else ""
+        sys_log(f"端点 '{ep.name}' 的一个 API Key 进入冷却 {max(1, minutes)} 分钟{suffix}", "WARN")
+
+    @staticmethod
+    def _clear_key_cooldown(ep, key):
+        if not key:
+            return
+        with ep._key_lock:
+            ep._key_cooldown_until.pop(key, None)
+
+    def _invalidate_cache_for_key_state(self, ep):
+        self._invalidate_cache()
+
+    @staticmethod
+    def _is_key_auth_or_rate_error(error):
+        text = str(error or "").lower()
+        return bool(re.search(r"(?:http\s*)?(?:401|403|429)\b", text)) or "auth error" in text or "rate-limited" in text
+
+    def _try_endpoint_with_keys(self, ep, payload, timeout, log_usage=True, force_no_retry=False):
+        """按配置顺序尝试上游 Key，Key 级错误只冷却当前 Key。"""
+        errors = []
+        for key in self._ordered_available_keys(ep):
+            result, error = self._try_endpoint(
+                ep, payload, timeout, log_usage=log_usage,
+                force_no_retry=force_no_retry, api_key=key,
+            )
+            if result is not None:
+                self._clear_key_cooldown(ep, key)
+                return result, "", key
+            if self._is_key_auth_or_rate_error(error):
+                self._cooldown_key(ep, key, "鉴权/限流")
+            errors.append(f"{key[:8]}***: {error}")
+        return None, "; ".join(errors) or "没有可用的 API Key", ""
+
+    def _fetch_models_for_endpoint(self, ep, timeout=10):
+        """使用端点的多 Key 配置获取模型目录。"""
+        errors = []
+        for key in self._ordered_available_keys(ep):
+            try:
+                models = self.fetch_models(
+                    ep.base_url, key, timeout=timeout,
+                    use_proxy=ep.use_proxy, protocol=ep.protocol,
+                )
+                self._clear_key_cooldown(ep, key)
+                return models
+            except Exception as exc:
+                error = str(exc)
+                if self._is_key_auth_or_rate_error(error):
+                    self._cooldown_key(ep, key, "模型列表鉴权/限流")
+                errors.append(f"{key[:8]}***: {error}")
+        raise RuntimeError("；".join(errors) or "没有可用的 API Key")
 
     def _check_new_endpoint_health(self, ep_id):
         """新端点添加后异步检测其健康状况"""
@@ -785,10 +891,16 @@ class APIPool:
                         # Preserve the old one-field API contract for existing automation.
                         updates["public_model"] = updates["model"]
                         updates["upstream_model"] = updates["model"]
+                    if "api_key" in updates and "api_keys" not in updates:
+                        # 旧接口传单个 Key 时，按旧语义替换整个 Key 列表。
+                        updates["api_keys"] = [updates.get("api_key", "")]
+                    elif "api_keys" in updates and "api_key" not in updates:
+                        updates["api_key"] = (updates.get("api_keys") or [""])[0]
                     for k, v in updates.items():
                         if hasattr(ep, k) and not k.startswith("_") and k != "id":
                             setattr(ep, k, v)
                     self._normalize_model_names(ep)
+                    self._normalize_api_keys(ep)
                     self._endpoints.sort(key=lambda e: e.priority)
                     break
         self._invalidate_cache()
@@ -812,12 +924,19 @@ class APIPool:
         self._chain_cache = None
 
     def _ep_to_dict(self, ep, is_current, now):
+        self._normalize_api_keys(ep)
         return {
             "id": ep.id,
             "name": ep.name,
             "base_url": ep.base_url,
             "api_key": ep.api_key[:8] + "***" if len(ep.api_key) > 8 else "***",
             "api_key_full": ep.api_key,
+            "api_keys": [key[:8] + "***" if len(key) > 8 else "***" for key in ep.api_keys],
+            "api_keys_full": list(ep.api_keys),
+            "api_key_cooldowns": [
+                {"index": i, "cooling": self._key_is_cooling(ep, key, now), "cooldown_remaining": max(0, int(ep._key_cooldown_until.get(key, 0) - now))}
+                for i, key in enumerate(ep.api_keys)
+            ],
             "model": ep.model,
             "public_model": ep.model,
             "upstream_model": ep.upstream_model,
@@ -912,6 +1031,8 @@ class APIPool:
                 ep._cooldown_until = 0
                 ep._transient_count = 0
                 ep._transient_window_start = 0
+                with ep._key_lock:
+                    ep._key_cooldown_until.clear()
                 with ep._rpm_lock:
                     ep._req_timestamps.clear()
             self._current_idx = 0
@@ -926,7 +1047,7 @@ class APIPool:
         if ep.health_mode == "models":
             t0 = time.time()
             try:
-                models = self.fetch_models(ep.base_url, ep.api_key, timeout=10, use_proxy=ep.use_proxy, protocol=ep.protocol)
+                models = self._fetch_models_for_endpoint(ep, timeout=10)
                 latency = int((time.time() - t0) * 1000)
                 if models:
                     return ep.id, "ok", latency, ""
@@ -942,7 +1063,7 @@ class APIPool:
         
         # Attempt 1
         t0 = time.time()
-        reply, err = self._try_endpoint(ep, payload, timeout=10, log_usage=False, force_no_retry=True)
+        reply, err, _ = self._try_endpoint_with_keys(ep, payload, timeout=10, log_usage=False, force_no_retry=True)
         latency = int((time.time() - t0) * 1000)
         
         if reply is not None and latency <= LATENCY_OK_MAX:
@@ -956,7 +1077,7 @@ class APIPool:
             
         # Attempt 2 (Retry for cold start or transient glitch)
         t1 = time.time()
-        reply2, err2 = self._try_endpoint(ep, payload, timeout=10, log_usage=False, force_no_retry=True)
+        reply2, err2, _ = self._try_endpoint_with_keys(ep, payload, timeout=10, log_usage=False, force_no_retry=True)
         latency2 = int((time.time() - t1) * 1000)
         
         if reply2 is not None and latency2 <= LATENCY_OK_MAX:
@@ -1006,7 +1127,7 @@ class APIPool:
         for v_ep in vision_eps:
             sys_log(f"启动图片解析 -> 尝试端点 {v_ep.name} ({v_ep.model})", "INFO")
             payload = {"model": v_ep.model, "messages": translation_msgs, "stream": False, "max_tokens": 4096}
-            result, error = self._try_endpoint(v_ep, payload, timeout=60, log_usage=True, force_no_retry=True)
+            result, error, _ = self._try_endpoint_with_keys(v_ep, payload, timeout=60, log_usage=True, force_no_retry=True)
             if error:
                 sys_log(f"图片解析失败 ({v_ep.name} - {v_ep.model}): {error}", "WARNING")
                 continue
@@ -1113,7 +1234,7 @@ class APIPool:
         a, b = random.randint(1, 99), random.randint(1, 99)
         op = random.choice(["+", "-", "*"])
         payload = {"model": ep.upstream_model, "messages": [{"role": "user", "content": f"{a}{op}{b}=?"}], "max_tokens": 5}
-        reply, _ = self._try_endpoint(ep, payload, timeout=10, log_usage=False, force_no_retry=True)
+        reply, _, _ = self._try_endpoint_with_keys(ep, payload, timeout=10, log_usage=False, force_no_retry=True)
         return reply is not None
 
     def _cleanup_expired_cooldowns(self):
@@ -1172,16 +1293,19 @@ class APIPool:
                 return group, list(group.members)
         return None, None
 
+    def _has_available_key(self, ep):
+        return bool(self._ordered_available_keys(ep))
+
     def _active_endpoints(self, requested_model=None):
         base = [ep for ep in self._endpoints if not self.is_station_connect_paused(ep)]
         target_model = (requested_model or "").strip()
         if target_model:
             tk = canon_model_key(target_model)
             base = [ep for ep in base if canon_model_key(ep.model) == tk]
-        available = [ep for ep in base if ep.enabled and ep.in_pool and not self._is_in_cooldown(ep) and not self._is_quota_exceeded(ep) and not self._is_rpm_limited(ep)]
+        available = [ep for ep in base if ep.enabled and ep.in_pool and self._has_available_key(ep) and not self._is_in_cooldown(ep) and not self._is_quota_exceeded(ep) and not self._is_rpm_limited(ep)]
         if available:
             return available
-        fallback = [ep for ep in base if ep.enabled and ep.in_pool and not self._is_quota_exceeded(ep)]
+        fallback = [ep for ep in base if ep.enabled and ep.in_pool and self._has_available_key(ep) and not self._is_quota_exceeded(ep)]
         fallback.sort(key=lambda e: e._cooldown_until)
         return fallback
 
@@ -1434,7 +1558,7 @@ class APIPool:
                             translated_msgs = self._translate_images_sync(pld["messages"], a_eps)
                             yield f"data: {{'choices':[{{'delta':{{'content':'[图片解析完成，交由目标模型继续处理...]\\n\\n'}}}}]}}\n\n".replace("'", '"')
                             pld["messages"] = translated_msgs
-                            gen, err = self._try_endpoint(tgt_ep, pld, t_out)
+                            gen, err, _ = self._try_endpoint_with_keys(tgt_ep, pld, t_out)
                             if err:
                                 yield f"data: {{'choices':[{{'delta':{{'content':'\\n\\n[API Pool Error: 请求最终目标失败: {err}]'}}}}]}}\n\n".replace("'", '"')
                             else:
@@ -1451,7 +1575,7 @@ class APIPool:
                 sys_log(f"重试请求，尝试端点 '{ep.name}' (模型: {ep_model})", "INFO")
 
             _t_call_start = time.time()
-            result, error = self._try_endpoint(ep, payload, ep_timeout)
+            result, error, used_key = self._try_endpoint_with_keys(ep, payload, ep_timeout)
             if result is not None:
                 if isinstance(result, dict):
                     result["model"] = alias_name or target_model or ep.model
@@ -1647,8 +1771,10 @@ class APIPool:
 
         raise AllEndpointsFailed(errors)
 
-    def _try_endpoint(self, ep, payload, timeout, log_usage=True, force_no_retry=False):
+    def _try_endpoint(self, ep, payload, timeout, log_usage=True, force_no_retry=False, api_key=None):
+        """请求单个上游 Key；api_key 未传时兼容旧版使用端点首个 Key。"""
         req_t0 = time.time()
+        request_api_key = (api_key or getattr(ep, "api_key", "") or "").strip()
         prompt_text_to_log = extract_prompt_text(payload) if log_usage and not ep.name.startswith("test_") else ""
         is_anthropic = (getattr(ep, "protocol", "openai") == "anthropic")
         
@@ -1786,7 +1912,7 @@ class APIPool:
             req.add_header("Content-Type", "application/json")
             req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             if is_anthropic:
-                safe_api_key = ep.api_key.encode('ascii', 'ignore').decode('ascii').strip()
+                safe_api_key = request_api_key.encode('ascii', 'ignore').decode('ascii').strip()
                 req.add_header("x-api-key", safe_api_key)
                 req.add_header("Authorization", f"Bearer {safe_api_key}")
                 req.add_header("anthropic-version", "2023-06-01")
@@ -1799,7 +1925,7 @@ class APIPool:
                 if betas:
                     req.add_header("anthropic-beta", ",".join(betas))
             else:
-                safe_api_key = ep.api_key.encode('ascii', 'ignore').decode('ascii').strip()
+                safe_api_key = request_api_key.encode('ascii', 'ignore').decode('ascii').strip()
                 req.add_header("Authorization", f"Bearer {safe_api_key}")
                 
             for k, v in ep.extra_headers.items():
@@ -2252,6 +2378,101 @@ class APIPool:
         else:
             unsupported = "image" in err.lower() or "vision" in err.lower() or "content" in err.lower() or "400" in err
             return {"ok": not unsupported, "supports_vision": not unsupported, "latency_ms": latency, "reply": "", "error": err}
+
+    def test_capabilities(self, base_url, api_key, model, timeout=15, use_proxy=True, protocol="openai"):
+        """检测候选模型的低消耗能力，不改变聚合池端点状态。"""
+        ep = Endpoint(
+            name="test_capabilities", base_url=base_url, api_key=api_key,
+            model=model, upstream_model=model, max_retries=0,
+            use_proxy=use_proxy, protocol=protocol,
+        )
+        results = {}
+
+        chat = self.test_model_latency(base_url, api_key, model, timeout, use_proxy, protocol)
+        results["chat"] = self._capability_result_from_probe(chat)
+
+        vision = self.test_vision(base_url, api_key, model, timeout, use_proxy, protocol)
+        vision_state = "supported" if vision.get("supports_vision") else self._capability_error_state(vision.get("error", ""))
+        results["vision"] = {
+            "state": vision_state,
+            "latency_ms": vision.get("latency_ms"),
+            "error": vision.get("error", ""),
+        }
+
+        if protocol == "anthropic":
+            results["embeddings"] = self._capability_result("unknown", "Anthropic 协议未启用 Embeddings 探测")
+            results["completions"] = self._capability_result("unknown", "Anthropic 协议未启用 Completions 探测")
+            return results
+
+        for capability, path_suffix, payload, validator in (
+            (
+                "embeddings", "embeddings", {"model": model, "input": "x"},
+                lambda data: isinstance(data.get("data"), list) and bool(data["data"]) and isinstance(data["data"][0].get("embedding"), list),
+            ),
+            (
+                "completions", "completions", {"model": model, "prompt": "x", "max_tokens": 1},
+                lambda data: isinstance(data.get("choices"), list) and bool(data["choices"]),
+            ),
+        ):
+            t0 = time.time()
+            try:
+                data = self._request_candidate_json(ep, path_suffix, payload, timeout)
+                valid = validator(data) if isinstance(data, dict) else False
+                results[capability] = self._capability_result(
+                    "supported" if valid else "unknown",
+                    "" if valid else "响应格式无法确认能力",
+                    int((time.time() - t0) * 1000),
+                )
+            except Exception as e:
+                results[capability] = self._capability_result(
+                    self._capability_error_state(str(e)), str(e)[:160], int((time.time() - t0) * 1000)
+                )
+        return results
+
+    @staticmethod
+    def _capability_result(state, error="", latency_ms=None):
+        result = {"state": state, "error": error}
+        if latency_ms is not None:
+            result["latency_ms"] = latency_ms
+        return result
+
+    def _capability_result_from_probe(self, probe):
+        return self._capability_result(
+            "supported" if probe.get("ok") else self._capability_error_state(probe.get("error", "")),
+            probe.get("error", ""), probe.get("latency_ms"),
+        )
+
+    @staticmethod
+    def _capability_error_state(error):
+        text = (error or "").lower()
+        unsupported_markers = (
+            "not support", "unsupported", "not available", "does not support", "model_not_found",
+            "unknown model", "not found", "模型不支持", "不支持", "不存在", "未找到",
+        )
+        return "unsupported" if any(marker in text for marker in unsupported_markers) else "unknown"
+
+    def _request_candidate_json(self, ep, path_suffix, payload, timeout):
+        url = ep.base_url.rstrip("/") + "/" + path_suffix.lstrip("/")
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("User-Agent", "Mozilla/5.0")
+        safe_key = ep.api_key.encode("ascii", "ignore").decode("ascii").strip()
+        req.add_header("Authorization", f"Bearer {safe_key}")
+        try:
+            if ep.use_proxy is False:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=_SSL_CTX))
+                resp = opener.open(req, timeout=timeout)
+            else:
+                resp = urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
+            with resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="ignore")[:300]
+            except Exception:
+                pass
+            raise RuntimeError(f"HTTP {e.code}: {body or e.reason}")
 
     def test_model_latency(self, base_url, api_key, model, timeout=15, use_proxy=True, protocol="openai"):
         ep = Endpoint(name="test_latency", base_url=base_url, api_key=api_key, model=model, max_retries=0, use_proxy=use_proxy, protocol=protocol)
@@ -2710,8 +2931,7 @@ def _refresh_dynamic_models():
                 if not ep.enabled:
                     continue
                 try:
-                    models = pool.fetch_models(ep.base_url, ep.api_key, timeout=8,
-                                               use_proxy=ep.use_proxy, protocol=ep.protocol)
+                    models = pool._fetch_models_for_endpoint(ep, timeout=8)
                     for m in models:
                         mid = m.get("id", "")
                         if mid and mid not in new_cache:
@@ -3885,6 +4105,84 @@ def api_handler(method, path, body):
         _sync_to_config()
         sys_log(f"中转站 '{key}': {'，'.join(parts) or '设置已更新'}", "INFO")
         return 200, {"ok": True, "station": next((s for s in pool.list_stations() if s["key"] == new_key), None)}, False
+    if method == "POST" and cp.startswith("/api/stations/") and cp.endswith("/model-pool"):
+        key = unquote(cp.split("/api/stations/", 1)[1].rsplit("/model-pool", 1)[0]).strip()
+        known = {s["key"] for s in pool.list_stations()}
+        if key not in known:
+            return 404, {"ok": False, "error": "中转站不存在"}, False
+        raw_models = body.get("models", [])
+        base = body.get("base", {})
+        if not isinstance(raw_models, list) or not isinstance(base, dict):
+            return 400, {"ok": False, "error": "models 必须是列表，base 必须是对象"}, False
+
+        selections = {}
+        for item in raw_models:
+            if not isinstance(item, dict):
+                continue
+            upstream_model = str(item.get("upstream_model") or "").strip()
+            model_key = canon_model_key(upstream_model)
+            if not model_key:
+                continue
+            public_model = str(item.get("public_model") or upstream_model).strip() or upstream_model
+            selections[model_key] = {
+                "upstream_model": upstream_model,
+                "public_model": public_model,
+                "in_pool": bool(item.get("in_pool")),
+            }
+        if not selections:
+            return 400, {"ok": False, "error": "至少需要一个有效模型"}, False
+
+        with pool._lock:
+            existing = [ep for ep in pool._endpoints if station_key(ep.base_url) == key]
+            existing_model_keys = {canon_model_key(ep.upstream_model or ep.model) for ep in existing}
+            updated = 0
+            for ep in existing:
+                selection = selections.get(canon_model_key(ep.upstream_model or ep.model))
+                if not selection:
+                    continue
+                ep.in_pool = selection["in_pool"]
+                if selection["in_pool"]:
+                    ep.model = selection["public_model"]
+                    ep.public_model = selection["public_model"]
+                pool._normalize_model_names(ep)
+                updated += 1
+        pool._invalidate_cache()
+
+        added = 0
+        start_priority = int(base.get("start_priority", 1) or 1)
+        new_models = [
+            selection for model_key, selection in selections.items()
+            if selection["in_pool"] and model_key not in existing_model_keys
+        ]
+        for i, selection in enumerate(new_models):
+            upstream_model = selection["upstream_model"]
+            public_model = selection["public_model"]
+            pool.add_endpoint({
+                "name": base.get("name") or public_model,
+                "base_url": base.get("base_url", ""),
+                "api_key": base.get("api_key", ""),
+                "api_keys": base.get("api_keys") or ([base.get("api_key")] if base.get("api_key") else []),
+                "model": public_model,
+                "public_model": public_model,
+                "upstream_model": upstream_model,
+                "priority": start_priority + i,
+                "timeout": base.get("timeout", 60),
+                "max_retries": base.get("max_retries", 0),
+                "cooldown_minutes": base.get("cooldown_minutes", 15),
+                "daily_limit": base.get("daily_limit", 0),
+                "rpm_limit": base.get("rpm_limit", 0),
+                "use_proxy": base.get("use_proxy", True),
+                "protocol": base.get("protocol", "openai"),
+                "health_mode": base.get("health_mode", "chat"),
+                "billing_mode": base.get("billing_mode", "subscription"),
+                "is_vision": base.get("is_vision", True),
+                "in_pool": True,
+                "enabled": base.get("enabled", True),
+            })
+            added += 1
+        _sync_to_config()
+        sys_log(f"中转站 '{key}' 模型池已更新（更新 {updated} 个端点，新增 {added} 个模型）", "INFO")
+        return 200, {"ok": True, "updated": updated, "added": added}, False
     if method == "DELETE" and cp.startswith("/api/stations/"):
         key = unquote(cp.split("/api/stations/", 1)[1])
         targets = [ep for ep in pool.list_endpoints() if station_key(ep["base_url"]) == key]
@@ -3921,6 +4219,7 @@ def api_handler(method, path, body):
             ep = {
                 "name": item.get("name", base.get("name", f"ep_{i}")), "base_url": item.get("base_url", base.get("base_url", "")),
                 "api_key": item.get("api_key", base.get("api_key", "")),
+                "api_keys": item.get("api_keys") or base.get("api_keys") or ([item.get("api_key", base.get("api_key", ""))] if item.get("api_key", base.get("api_key", "")) else []),
                 "model": item.get("public_model", item.get("model", "")),
                 "public_model": item.get("public_model", item.get("model", "")),
                 "upstream_model": item.get("upstream_model", item.get("model", "")),
@@ -3981,6 +4280,16 @@ def api_handler(method, path, body):
             return 200, {"ok": False, "error": str(e)}, False
     if method == "POST" and cp == "/api/test-model": return 200, pool.test_model_latency(body.get("base_url", ""), body.get("api_key", ""), body.get("model", ""), timeout=body.get("timeout", 60), use_proxy=body.get("use_proxy", True), protocol=body.get("protocol", "openai")), False
     if method == "POST" and cp == "/api/test-vision": return 200, pool.test_vision(body.get("base_url", ""), body.get("api_key", ""), body.get("model", ""), timeout=body.get("timeout", 60), use_proxy=body.get("use_proxy", True), protocol=body.get("protocol", "openai")), False
+    if method == "POST" and cp == "/api/test-capabilities":
+        base_url = body.get("base_url", "")
+        api_key = body.get("api_key", "")
+        model = body.get("model", "")
+        if not base_url or not api_key or not model:
+            return 400, {"ok": False, "error": "需要 base_url、api_key 和 model"}, False
+        return 200, pool.test_capabilities(
+            base_url, api_key, model, timeout=body.get("timeout", 15),
+            use_proxy=body.get("use_proxy", True), protocol=body.get("protocol", "openai"),
+        ), False
     if method == "POST" and cp == "/api/test":
         ep_id = body.get("id", ""); test_msg = body.get("message", "你好"); target_ep = None
         for ep in pool.list_endpoints():
@@ -4161,7 +4470,7 @@ def _sync_to_config():
     with pool._lock:
         eps = list(pool._endpoints)
         groups = dict(pool.model_groups)
-    save_config([{"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key, "model": ep.model, "public_model": ep.public_model, "upstream_model": ep.upstream_model, "priority": ep.priority, "timeout": ep.timeout, "max_retries": ep.max_retries, "enabled": ep.enabled, "cooldown_minutes": ep.cooldown_minutes, "daily_limit": ep.daily_limit, "rpm_limit": ep.rpm_limit, "use_proxy": ep.use_proxy, "protocol": ep.protocol, "health_mode": ep.health_mode, "billing_mode": ep.billing_mode, "is_vision": ep.is_vision, "in_pool": ep.in_pool} for ep in eps], station_settings=pool.station_settings, model_aliases=pool.model_aliases, model_groups=groups)
+    save_config([{"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key, "api_keys": list(ep.api_keys), "model": ep.model, "public_model": ep.public_model, "upstream_model": ep.upstream_model, "priority": ep.priority, "timeout": ep.timeout, "max_retries": ep.max_retries, "enabled": ep.enabled, "cooldown_minutes": ep.cooldown_minutes, "daily_limit": ep.daily_limit, "rpm_limit": ep.rpm_limit, "use_proxy": ep.use_proxy, "protocol": ep.protocol, "health_mode": ep.health_mode, "billing_mode": ep.billing_mode, "is_vision": ep.is_vision, "in_pool": ep.in_pool} for ep in eps], station_settings=pool.station_settings, model_aliases=pool.model_aliases, model_groups=groups)
 
 
 LOGIN_HTML = r"""<!DOCTYPE html>
@@ -4392,26 +4701,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter',system-u
 .mb-toolbar label{font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;gap:3px;white-space:nowrap}
 .mb-toolbar .count{font-size:10px;color:var(--text-dim);white-space:nowrap}
 .mb-table{max-height:300px;overflow-y:auto}
-.mb-head{display:grid;grid-template-columns:28px 1fr 150px 60px 72px 62px;gap:6px;padding:6px 10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;font-weight:600;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1}
-.mb-row{display:grid;grid-template-columns:28px 1fr 150px 60px 72px 62px;gap:6px;padding:6px 10px;align-items:center;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px;cursor:pointer;transition:background .08s}
+.mb-head{display:grid;grid-template-columns:28px minmax(0,1fr) 150px 60px 126px 72px 62px;gap:6px;padding:6px 10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;font-weight:600;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:3}
+.mb-row{display:grid;grid-template-columns:28px minmax(0,1fr) 150px 60px 126px 72px 62px;gap:6px;padding:6px 10px;align-items:center;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px;cursor:pointer;transition:background .08s;position:relative}
 .mb-row.existing{opacity:.42;cursor:not-allowed;background:rgba(255,255,255,.015)}
 .mb-row.existing:hover{background:rgba(255,255,255,.015)}
 .mb-row.existing .name-cell{color:var(--text-dim)}
 .mb-row.existing input[type=checkbox]{cursor:not-allowed}
 .existing-tag{display:inline-block;margin-left:6px;padding:1px 5px;border:1px solid rgba(255,255,255,.16);border-radius:4px;color:var(--text-dim);font-size:9px;line-height:1.3;vertical-align:1px}
-.mb-row .alias-cell input{width:100%;padding:3px 6px;background:rgba(0,0,0,.28);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;outline:none}
-.mb-row .alias-cell input:focus{border-color:var(--accent);background:rgba(0,0,0,.5)}
-.mb-row.selected .alias-cell input{background:rgba(0,0,0,.32);border-color:rgba(255,255,255,.35);color:#fff}
+.mb-row .name-cell{grid-column:2;min-width:0;position:relative;z-index:1;overflow:visible}
+.mb-row .name-overflow{position:absolute;left:0;top:50%;transform:translateY(-50%);white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;pointer-events:none}
+.mb-row .alias-cell{grid-column:3;min-width:0;position:relative;z-index:2;height:24px}
+.mb-row .alias-cell input{position:relative;z-index:1;width:100%;height:24px;line-height:normal;padding:0 6px;background:rgba(9,10,15,.98);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;outline:none}
+.mb-row .alias-cell input:focus{border-color:var(--accent);background:rgba(9,10,15,.98)}
+.mb-row.selected .alias-cell input{background:rgba(9,10,15,.98);border-color:rgba(255,255,255,.35);color:#fff}
 .mb-row .alias-cell input::placeholder{color:var(--text-dim);opacity:.55}
 .mb-row:last-child{border-bottom:none}
 .mb-row:hover{background:var(--card-hover)}
 .mb-row.selected{background:var(--accent);color:#fff}
 .mb-row input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
-.mb-row .name-cell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mb-row .mm-cell{text-align:center;font-size:11px}
 .mm-yes{color:var(--green)}
 .mm-no{color:var(--text-dim)}
 .mm-unknown{color:var(--text-dim);opacity:.5}
+.cap-cell{display:flex;gap:3px;align-items:center;white-space:nowrap;font-size:10px}
+.cap-yes{color:var(--green)}
+.cap-no{color:var(--red)}
+.cap-unknown{color:var(--text-dim)}
 .mb-row .price-cell{font-size:10px;color:var(--text-dim);white-space:nowrap}
 .mb-row.selected .price-cell{color:rgba(255,255,255,.6)}
 .free-tag{font-size:9px;background:var(--green-dim);color:var(--green);padding:1px 5px;border-radius:8px}
@@ -4895,29 +5210,51 @@ async function api(method,path,body){
   return await resp.json();
 }
 
-let allModels=[],selectedModels=new Set(),latencyResults={},visionResults={},modelAliases={};
+let allModels=[],selectedModels=new Set(),latencyResults={},visionResults={},capabilityResults={},modelAliases={};
 let keyList=[{key:''}],modelKeyMap={};
 let epFilter='all',modelPage=1,PP=50;
 let clientApiKeyPlain='';
 let stationFilter='';
 let _stations=[];
 let existingModels=new Set(); // 当前中转站已接入的上游模型归一化名
+let stationEditModelMode=false;
+let existingSelectionInitialized=false;
+let existingStationModelEndpoints={};
 
 function canonicalModelKey(name){return String(name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'');}
 function isExistingModel(model){return existingModels.has(canonicalModelKey(model));}
 async function loadExistingStationModels(){
   existingModels.clear();
+  existingStationModelEndpoints={};
   const currentStation=stationKeyOf(document.getElementById('fUrl').value.trim());
   if(!currentStation)return;
   const eps=await api('GET','/api/endpoints');
   if(!Array.isArray(eps))return;
-  const editingId=document.getElementById('editName').value;
+  const editingId=stationEditModelMode?'':document.getElementById('editName').value;
   eps.forEach(ep=>{
     if(ep.id!==editingId&&stationKeyOf(ep.base_url)===currentStation){
       const key=canonicalModelKey(ep.upstream_model||ep.model);
-      if(key)existingModels.add(key);
+      if(!key)return;
+      existingModels.add(key);
+      if(!existingStationModelEndpoints[key])existingStationModelEndpoints[key]=[];
+      existingStationModelEndpoints[key].push(ep);
     }
   });
+}
+function initializeExistingStationSelection(){
+  if(!stationEditModelMode||existingSelectionInitialized)return;
+  existingSelectionInitialized=true;
+  Object.entries(existingStationModelEndpoints).forEach(([key,endpoints])=>{
+    const active=endpoints.find(ep=>ep.in_pool)||endpoints[0];
+    if(!active)return;
+    const model=allModels.find(m=>canonicalModelKey(m.id)===key);
+    if(model){
+      modelAliases[model.id]=active.model||model.id;
+      modelKeyMap[model.id]=modelKeyMap[model.id]||keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
+      if(endpoints.some(ep=>ep.in_pool))selectedModels.add(model.id);
+    }
+  });
+  filterModels();
 }
 
 async function refresh(){
@@ -5320,15 +5657,19 @@ function openStationEdit(key){
 }
 function closeStationEdit(){document.getElementById('stationEditModal').classList.remove('show');}
 async function seFetchModels(){
-  // 复用「添加端点」弹窗：带上该站配置模板打开并自动拉取模型列表
+  // 复用「添加端点」弹窗：进入该站的模型池编辑模式
   const eps=await api('GET','/api/endpoints');
   const tpl=(eps||[]).find(e=>stationKeyOf(e.base_url)===_seKey);
   if(!tpl){toast('该站没有可参考的端点','error');return;}
   closeStationEdit();
   openAddModal();
+  stationEditModelMode=true;
+  existingSelectionInitialized=false;
+  existingStationModelEndpoints={};
+  document.getElementById('modalTitle').textContent='编辑中转站模型池';
   document.getElementById('fName').value=tpl.name;
   document.getElementById('fUrl').value=tpl.base_url;
-  keyList=[{key:tpl.api_key_full||''}];modelKeyMap={};renderKeyList();
+  keyList=(tpl.api_keys_full||[tpl.api_key_full||'']).filter(Boolean).map(key=>({key}));if(!keyList.length)keyList=[{key:''}];modelKeyMap={};renderKeyList();
   document.getElementById('fTimeout').value=tpl.timeout;
   document.getElementById('fRetries').value=tpl.max_retries;
   document.getElementById('fCooldown').value=tpl.cooldown_minutes;
@@ -5661,11 +6002,21 @@ async function fetchAllKeys(){
   const keys=keyList.filter(kv=>kv.key.trim());
   if(!keys.length){toast('填写至少一个 Key','error');return;}
 
+  allModels=[];modelKeyMap={};selectedModels=new Set();latencyResults={};visionResults={};capabilityResults={};modelPage=1;
+  existingSelectionInitialized=false;
   await loadExistingStationModels();
-
-  allModels=[];modelKeyMap={};selectedModels=new Set();latencyResults={};visionResults={};modelPage=1;
   const b=document.getElementById('fetchModelsBtn');b.disabled=true;b.innerHTML='⏳';
   for(let i=0;i<keyList.length;i++){if(keyList[i].key.trim())await fetchModelsForKeyIdx(i);}
+  if(stationEditModelMode){
+    Object.entries(existingStationModelEndpoints).forEach(([key,endpoints])=>{
+      if(allModels.some(m=>canonicalModelKey(m.id)===key))return;
+      const ep=endpoints[0];
+      const upstreamModel=ep.upstream_model||ep.model;
+      allModels.push({id:upstreamModel});
+      modelKeyMap[upstreamModel]=modelKeyMap[upstreamModel]||firstKey;
+    });
+    initializeExistingStationSelection();
+  }
   b.disabled=false;b.innerHTML='🔍 获取全部';
   if(allModels.length)renderModelBrowser();
 }
@@ -5681,10 +6032,11 @@ function renderModelBrowser(){
       <button class="btn btn-ghost btn-sm" onclick="selectNone()">清空</button>
       <button class="btn btn-ghost btn-sm" onclick="testSelectedLatency()">⏱ 延迟</button>
       <button class="btn btn-ghost btn-sm" onclick="testSelectedVision()">🖼 多模态</button>
+      <button class="btn btn-ghost btn-sm" onclick="testSelectedCapabilities()">✦ 检测能力</button>
       ${isOpenRouter()?`<label><input type="checkbox" id="freeOnly" onchange="modelPage=1;filterModels()"> 🆓免费</label>`:''}
       <span class="count" id="modelCount"></span>
     </div>
-    <div class="mb-head"><span></span><span>上游模型</span><span>对外名（映射）</span><span style="text-align:center">多模态</span><span>价格</span><span>延迟</span></div>
+    <div class="mb-head"><span></span><span>上游模型</span><span>对外名（映射）</span><span style="text-align:center">多模态</span><span>能力</span><span>价格</span><span>延迟</span></div>
     <div class="mb-table" id="modelListInner"></div>
     <div class="pagination" id="modelPagination" style="display:none"></div>
   </div>`;
@@ -5713,15 +6065,26 @@ function filterModels(){
     const lat=latencyResults[m.id];
     let lh='';
     if(lat){if(lat.status==='ok')lh=`<span class="lat-ok">✓${lat.latency_ms}ms</span>`;else if(lat.status==='slow')lh=`<span class="lat-slow">🐢${lat.latency_ms}ms</span>`;else lh=`<span class="lat-bad">✗${lat.latency_ms}ms</span>`;}
+    const caps=capabilityResults[m.id];
+    const capLabel=(key,label)=>{
+      const item=caps?.[key];
+      if(!item)return `<span class="cap-unknown">${label}?</span>`;
+      const cls=item.state==='supported'?'cap-yes':(item.state==='unsupported'?'cap-no':'cap-unknown');
+      const symbol=item.state==='supported'?'✓':(item.state==='unsupported'?'✗':'?');
+      return `<span class="${cls}" title="${esc(item.error||label+' '+item.state)}">${label}${symbol}</span>`;
+    };
+    const ch=capLabel('chat','聊'),vi=capLabel('vision','图'),em=capLabel('embeddings','向'),co=capLabel('completions','补');
     let ph='';
     if(m.pricing){if(isFreeModel(m))ph='<span class="free-tag">FREE</span>';else ph=`<span style="font-size:10px;color:var(--text-dim)">$${m.pricing.prompt||'0'}/$${m.pricing.completion||'0'}</span>`;}
     const al=modelAliases[m.id]||'';
     const isExisting=isExistingModel(m.id);
-    return`<div class="mb-row${sel?' selected':''}${isExisting?' existing':''}" onclick="event.target.tagName!=='INPUT'&&toggleModel('${esc(m.id)}')">
-      <input type="checkbox" ${sel?'checked':''} ${isExisting?'disabled':''} onclick="event.stopPropagation();toggleModel('${esc(m.id)}')">
-      <span class="name-cell" title="${esc(m.id)}">${esc(m.id)}${isExisting?' <span class="existing-tag">已接入</span>':''}</span>
+    const canToggleExisting=stationEditModelMode&&isExisting;
+    return`<div class="mb-row${sel?' selected':''}${isExisting&&!canToggleExisting?' existing':''}" onclick="event.target.tagName!=='INPUT'&&toggleModel('${esc(m.id)}')">
+      <input type="checkbox" ${sel?'checked':''} ${isExisting&&!canToggleExisting?'disabled':''} onclick="event.stopPropagation();toggleModel('${esc(m.id)}')">
+      <span class="name-cell" title="${esc(m.id)}"><span class="name-overflow">${esc(m.id)}${isExisting&&!canToggleExisting?' <span class="existing-tag">已接入</span>':''}</span></span>
       <span class="alias-cell">${sel?`<input type="text" value="${esc(al)}" placeholder="${esc(m.id)}" onclick="event.stopPropagation()" oninput="setAlias('${esc(m.id)}',this.value)">`:''}</span>
       <span class="mm-cell">${mm}</span>
+      <span class="cap-cell">${ch}${vi}${em}${co}</span>
       <span class="price-cell">${ph}</span>
       <span class="lat-cell">${lh}</span>
     </div>`;
@@ -5738,16 +6101,13 @@ function filterModels(){
 }
 
 function toggleModel(id){
-  if(isExistingModel(id)){toast('该模型已接入当前中转站','info');return;}
+  if(isExistingModel(id)&&!stationEditModelMode){toast('该模型已接入当前中转站','info');return;}
   const wasSelected=selectedModels.has(id);
   if(wasSelected){
     selectedModels.delete(id);
   }else{
     selectedModels.add(id);
-    // 新勾选时：如果该模型还没有映射名，自动填充为模型名本身
-    if(!modelAliases[id]){
-      modelAliases[id]=id;
-    }
+    if(!modelAliases[id])modelAliases[id]=id;
   }
   if(selectedModels.size===1){
     document.getElementById('fModel').value=[...selectedModels][0];
@@ -5759,11 +6119,18 @@ function toggleModel(id){
   filterModels();
 }
 function setAlias(upstreamModel,publicModel){modelAliases[upstreamModel]=publicModel.trim();}
-function selectAll(){getFilteredModels().filter(m=>!isExistingModel(m.id)).forEach(m=>selectedModels.add(m.id));filterModels();}
+function selectAll(){getFilteredModels().filter(m=>stationEditModelMode||!isExistingModel(m.id)).forEach(m=>selectedModels.add(m.id));filterModels();}
 function selectNone(){selectedModels.clear();document.getElementById('fModel').value='';document.getElementById('fUpstreamModel').value='';filterModels();}
 
 function updateBatchBar(){
   const bar=document.getElementById('batchBar'),bb=document.getElementById('batchAddBtn'),sb=document.getElementById('singleAddBtn');
+  if(stationEditModelMode){
+    bar.style.display='block';
+    bar.innerHTML='<div class="batch-bar"><span>编辑中转站模型池：取消勾选仅移出模型池，不删除端点</span></div>';
+    bb.style.display='none';sb.style.display='inline-flex';sb.textContent='保存模型池';
+    return;
+  }
+  sb.textContent='保存';
   if(selectedModels.size>1){bar.style.display='block';bar.innerHTML=`<div class="batch-bar"><span>已选 ${selectedModels.size} 个模型</span></div>`;bb.style.display='inline-flex';sb.style.display='none';}
   else{bar.style.display='none';bb.style.display='none';sb.style.display='inline-flex';}
 }
@@ -5791,13 +6158,38 @@ async function testSelectedVision(){
   toast(`多模态: ${vis}/${ms.length} 支持`,'success');
 }
 
+async function testSelectedCapabilities(){
+  const u=document.getElementById('fUrl').value.trim();
+  const firstKey=keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
+  const up=document.getElementById('fProxy').value==='true',pt=document.getElementById('fProtocol').value||'openai';
+  const ms=[...selectedModels].filter(m=>!isExistingModel(m));
+  if(!u||!firstKey){toast('填写 URL 和 Key','error');return;}
+  if(!ms.length){toast('勾选需要检测的模型','error');return;}
+  let supported=0;
+  for(let i=0;i<ms.length;i++){
+    const mid=ms[i];
+    capabilityResults[mid]={};filterModels();
+    toast(`检测能力 ${i+1}/${ms.length}: ${mid}`,'info');
+    try{
+      const result=await api('POST','/api/test-capabilities',{base_url:u,api_key:modelKeyMap[mid]||firstKey,model:mid,use_proxy:up,protocol:pt,timeout:15});
+      capabilityResults[mid]=result||{};
+      if(Object.values(result||{}).some(item=>item&&item.state==='supported'))supported++;
+    }catch(e){
+      capabilityResults[mid]={chat:{state:'unknown',error:e.message||'检测请求失败'}};
+    }
+    filterModels();
+  }
+  toast(`能力检测完成：${supported}/${ms.length} 个模型有可确认能力`,'success');
+}
+
 function openAddModal(){
+    stationEditModelMode=false;existingSelectionInitialized=false;existingStationModelEndpoints={};
     document.getElementById('editName').value='';document.getElementById('modalTitle').textContent='添加端点';
     ['fName','fUrl','fModel','fUpstreamModel'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('fPriority').value=1;document.getElementById('fTimeout').value=60;document.getElementById('fRetries').value=0;document.getElementById('fCooldown').value=5;document.getElementById('fEnabled').value='true';document.getElementById('fDailyLimit').value=0;document.getElementById('fRpmLimit').value=0;document.getElementById('fProxy').value='true';document.getElementById('fProtocol').value='openai';document.getElementById('fHealthMode').value='chat';document.getElementById('fVision').value='true';
     document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';
     document.getElementById('fetchModelsBtn').disabled=true;document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
-    allModels=[];selectedModels=new Set();latencyResults={};visionResults={};keyList=[{key:''}];modelKeyMap={};modelAliases={};
+    allModels=[];selectedModels=new Set();latencyResults={};visionResults={};capabilityResults={};keyList=[{key:''}];modelKeyMap={};modelAliases={};
     renderKeyList();
     // 添加新端点时，清空已存在模型集合
     existingModels.clear();
@@ -5810,15 +6202,49 @@ function editEndpoint(id){
         document.getElementById('fPriority').value=ep.priority;document.getElementById('fTimeout').value=ep.timeout;document.getElementById('fRetries').value=ep.max_retries;document.getElementById('fCooldown').value=ep.cooldown_minutes;document.getElementById('fEnabled').value=String(ep.enabled);document.getElementById('fDailyLimit').value=ep.daily_limit||0;document.getElementById('fRpmLimit').value=ep.rpm_limit||0;document.getElementById('fProxy').value=String(ep.use_proxy!==false);document.getElementById('fProtocol').value=ep.protocol||'openai';document.getElementById('fHealthMode').value=ep.health_mode||'chat';document.getElementById('fVision').value=String(ep.is_vision!==false);
         keyList=[{key:ep.api_key_full||''}];modelKeyMap={};renderKeyList();
         document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
-        allModels=[];selectedModels=new Set();latencyResults={};visionResults={};modelAliases={};existingModels.clear();
+        allModels=[];selectedModels=new Set();latencyResults={};visionResults={};capabilityResults={};modelAliases={};existingModels.clear();
         checkFetchBtn();document.getElementById('modal').classList.add('show');
     });
 }
 function closeModal(){document.getElementById('modal').classList.remove('show');}
 
+async function saveStationModelSelection(){
+  const url=document.getElementById('fUrl').value.trim();
+  const firstKey=keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
+  if(!url||!firstKey){toast('填写 URL 和 Key','error');return;}
+  const selected=new Set([...selectedModels].map(canonicalModelKey));
+  const models=allModels.map(m=>({
+    upstream_model:m.id,
+    public_model:(modelAliases[m.id]||m.id).trim()||m.id,
+    in_pool:selected.has(canonicalModelKey(m.id)),
+  }));
+  const base={
+    name:document.getElementById('fName').value.trim(),base_url:url,api_key:firstKey,
+    start_priority:parseInt(document.getElementById('fPriority').value)||1,
+    timeout:parseInt(document.getElementById('fTimeout').value)||60,
+    max_retries:parseInt(document.getElementById('fRetries').value)||0,
+    cooldown_minutes:parseInt(document.getElementById('fCooldown').value)||5,
+    daily_limit:parseInt(document.getElementById('fDailyLimit').value)||0,
+    rpm_limit:parseInt(document.getElementById('fRpmLimit').value)||0,
+    use_proxy:document.getElementById('fProxy').value==='true',
+    protocol:document.getElementById('fProtocol').value||'openai',
+    health_mode:document.getElementById('fHealthMode').value||'chat',
+    is_vision:document.getElementById('fVision').value==='true',
+    enabled:document.getElementById('fEnabled').value==='true',
+  };
+  const r=await api('POST',`/api/stations/${encodeURIComponent(_seKey)}/model-pool`,{models,base});
+  if(!r||!r.ok){toast(r?.error||'保存模型池失败','error');return;}
+  toast(`模型池已保存（更新 ${r.updated} 个端点，新增 ${r.added} 个模型）`,'success');
+  stationEditModelMode=false;
+  closeModal();refresh();
+}
+
 async function saveEndpoint(){
-    const ep_id=document.getElementById('editName').value;
-    const publicModel=document.getElementById('fModel').value.trim(),upstreamModel=document.getElementById('fUpstreamModel').value.trim()||publicModel;
+  if(stationEditModelMode){await saveStationModelSelection();return;}
+  const ep_id=document.getElementById('editName').value;
+    const upstreamModel=document.getElementById('fUpstreamModel').value.trim()||document.getElementById('fModel').value.trim();
+    const aliasEdited=Object.prototype.hasOwnProperty.call(modelAliases,upstreamModel);
+    const publicModel=(aliasEdited?modelAliases[upstreamModel].trim():document.getElementById('fModel').value.trim())||upstreamModel;
     const firstKey=modelKeyMap[upstreamModel]||keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
     const d={name:document.getElementById('fName').value.trim(),base_url:document.getElementById('fUrl').value.trim(),api_key:firstKey,model:publicModel,public_model:publicModel,upstream_model:upstreamModel,priority:parseInt(document.getElementById('fPriority').value)||1,timeout:parseInt(document.getElementById('fTimeout').value)||60,max_retries:parseInt(document.getElementById('fRetries').value)||0,cooldown_minutes:parseInt(document.getElementById('fCooldown').value)||0,enabled:document.getElementById('fEnabled').value==='true',daily_limit:parseInt(document.getElementById('fDailyLimit').value)||0,rpm_limit:parseInt(document.getElementById('fRpmLimit').value)||0,use_proxy:document.getElementById('fProxy').value==='true',protocol:document.getElementById('fProtocol').value||'openai',health_mode:document.getElementById('fHealthMode').value||'chat',is_vision:document.getElementById('fVision').value==='true'};
     if(!d.name||!d.base_url||!d.api_key){toast('填写名称/URL/Key','error');return;}
