@@ -649,16 +649,18 @@ class APIPool:
             if value and value not in keys:
                 keys.append(value)
         legacy_key = str(getattr(ep, "api_key", "") or "").strip()
-        if legacy_key and legacy_key not in keys:
-            keys.insert(0, legacy_key)
-        ep.api_keys = keys
-        ep.api_key = keys[0] if keys else ""
-        if not isinstance(getattr(ep, "_key_cooldown_until", None), dict):
-            ep._key_cooldown_until = {}
-        # 配置被编辑后，移除已经不存在的 Key 的运行时状态。
-        ep._key_cooldown_until = {
-            key: until for key, until in ep._key_cooldown_until.items() if key in keys
-        }
+        # 新版配置明确提供 api_keys 时，以列表顺序为准；只有旧版单 api_key 配置才回填列表。
+        if not keys and legacy_key:
+            keys.append(legacy_key)
+        with ep._key_lock:
+            ep.api_keys = keys
+            ep.api_key = keys[0] if keys else ""
+            if not isinstance(getattr(ep, "_key_cooldown_until", None), dict):
+                ep._key_cooldown_until = {}
+            # 配置被编辑后，移除已经不存在的 Key 的运行时状态。
+            ep._key_cooldown_until = {
+                key: until for key, until in ep._key_cooldown_until.items() if key in keys
+            }
 
     @staticmethod
     def _key_is_cooling(ep, key, now=None):
@@ -701,6 +703,20 @@ class APIPool:
         text = str(error or "").lower()
         return bool(re.search(r"(?:http\s*)?(?:401|403|429)\b", text)) or "auth error" in text or "rate-limited" in text
 
+    @staticmethod
+    def _sanitize_upstream_error(error):
+        """只向调用方暴露状态类别，避免回显上游响应中的密钥或内部细节。"""
+        text = str(error or "")
+        match = re.search(r"(?:HTTP\s*)?(401|403|404|408|409|429|500|502|503|504)\b", text, re.IGNORECASE)
+        if match:
+            return f"上游 HTTP {match.group(1)}"
+        lowered = text.lower()
+        if "超时" in text or "timeout" in lowered:
+            return "上游连接超时"
+        if "连接" in text or "connection" in lowered or "urlopen" in lowered:
+            return "上游连接失败"
+        return "上游请求失败"
+
     def _try_endpoint_with_keys(self, ep, payload, timeout, log_usage=True, force_no_retry=False):
         """按配置顺序尝试上游 Key，Key 级错误只冷却当前 Key。"""
         errors = []
@@ -714,7 +730,7 @@ class APIPool:
                 return result, "", key
             if self._is_key_auth_or_rate_error(error):
                 self._cooldown_key(ep, key, "鉴权/限流")
-            errors.append(f"{key[:8]}***: {error}")
+            errors.append(self._sanitize_upstream_error(error))
         return None, "; ".join(errors) or "没有可用的 API Key", ""
 
     def _fetch_models_for_endpoint(self, ep, timeout=10):
@@ -732,7 +748,7 @@ class APIPool:
                 error = str(exc)
                 if self._is_key_auth_or_rate_error(error):
                     self._cooldown_key(ep, key, "模型列表鉴权/限流")
-                errors.append(f"{key[:8]}***: {error}")
+                errors.append(self._sanitize_upstream_error(error))
         raise RuntimeError("；".join(errors) or "没有可用的 API Key")
 
     def _check_new_endpoint_health(self, ep_id):
@@ -1607,8 +1623,12 @@ class APIPool:
             except Exception:
                 pass
             attempted_endpoint_ids.add(ep.id)
+            if self._has_available_key(ep):
+                with self._lock:
+                    self._rotate(ep, error, requested_model=target_model)
+            else:
+                sys_log(f"端点 '{ep.name}' 的所有 API Key 均在单 Key 冷却中，保留端点状态", "WARN")
             with self._lock:
-                self._rotate(ep, error, requested_model=target_model)
                 active = self._active_endpoints(target_model)
                 active.sort(key=lambda e: e.priority)
                 remaining = [candidate for candidate in active if candidate.id not in attempted_endpoint_ids]
@@ -1619,6 +1639,97 @@ class APIPool:
             raise ModelRouteError(target_model, f"模型 {target_model} 的所有同名端点均不可用: {errors}")
         raise AllEndpointsFailed(errors)
 
+    def _forward_with_keys(self, path_suffix, requested_model, request_body,
+                           content_type="application/json", timeout=120,
+                           return_raw=False):
+        """统一转发非 chat 请求：按端点和 Key 的配置顺序逐级故障切换。"""
+        self._cleanup_expired_cooldowns()
+        active = self._active_endpoints(requested_model or None)
+        if not active:
+            raise AllEndpointsFailed(["无可用端点"])
+
+        errors = []
+        attempted = set()
+        while True:
+            candidates = [ep for ep in active if ep.id not in attempted]
+            if not candidates:
+                break
+            ep = self._pick_best(candidates)
+            if ep is None:
+                break
+            attempted.add(ep.id)
+            upstream = getattr(ep, "upstream_model", None) or ep.model
+            send_body = request_body
+            if content_type == "application/json":
+                try:
+                    send_obj = json.loads(request_body.decode("utf-8"))
+                    if upstream:
+                        send_obj["model"] = upstream
+                    send_body = json.dumps(send_obj).encode("utf-8")
+                except Exception as exc:
+                    errors.append(f"{ep.name}: 请求体无效: {exc}")
+                    with self._lock:
+                        self._rotate(ep, str(exc))
+                    active = self._active_endpoints(requested_model or None)
+                    continue
+
+            key_errors = []
+            for key in self._ordered_available_keys(ep):
+                url = ep.base_url.rstrip("/") + "/" + path_suffix.lstrip("/")
+                req = urllib.request.Request(url, data=send_body, method="POST")
+                req.add_header("Content-Type", content_type)
+                req.add_header("User-Agent", "Mozilla/5.0")
+                safe_key = key.encode("ascii", "ignore").decode("ascii").strip()
+                req.add_header("Authorization", f"Bearer {safe_key}")
+                for header_name, header_value in ep.extra_headers.items():
+                    req.add_header(header_name, header_value)
+
+                started = time.time()
+                try:
+                    if getattr(ep, "use_proxy", True) is False:
+                        opener = urllib.request.build_opener(
+                            urllib.request.ProxyHandler({}),
+                            urllib.request.HTTPSHandler(context=_SSL_CTX),
+                        )
+                        resp = opener.open(req, timeout=timeout)
+                    else:
+                        resp = urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
+                    try:
+                        raw = resp.read()
+                        response_type = (resp.headers.get("Content-Type") or "application/json").split(";")[0].strip().lower()
+                    finally:
+                        resp.close()
+                    self._on_success(ep, latency_ms=(time.time() - started) * 1000)
+                    sys_log(f"[{path_suffix}] 端点 '{ep.name}' 成功，耗时 {(time.time() - started) * 1000:.0f}ms", "INFO")
+                    if return_raw and (response_type.startswith("audio/") or response_type == "application/octet-stream"):
+                        return raw, response_type
+                    return json.loads(raw.decode("utf-8"))
+                except urllib.error.HTTPError as exc:
+                    try:
+                        err_body = exc.read().decode("utf-8", errors="ignore")[:200]
+                    except Exception:
+                        err_body = ""
+                    err_msg = f"HTTP {exc.code}: {err_body}"
+                    key_errors.append(self._sanitize_upstream_error(err_msg))
+                    if self._is_key_auth_or_rate_error(err_msg):
+                        self._cooldown_key(ep, key, "鉴权/限流")
+                    continue
+                except Exception as exc:
+                    key_errors.append(self._sanitize_upstream_error(exc))
+                    continue
+
+            endpoint_error = "; ".join(key_errors) or "没有可用的 API Key"
+            errors.append(f"{ep.name}: {endpoint_error}")
+            sys_log(f"[{path_suffix}] 端点 '{ep.name}' 请求失败，尝试下一个", "WARN")
+            if self._has_available_key(ep):
+                with self._lock:
+                    self._rotate(ep, endpoint_error)
+            else:
+                sys_log(f"[{path_suffix}] 端点 '{ep.name}' 的所有 API Key 均在单 Key 冷却中，保留端点状态", "WARN")
+            active = self._active_endpoints(requested_model or None)
+
+        raise AllEndpointsFailed(errors)
+
     def forward_request(self, path_suffix, body, timeout=None, return_raw=False):
         """
         透传非 chat 类请求（embeddings、images/generations 等）到池内端点。
@@ -1627,6 +1738,26 @@ class APIPool:
         return_raw=True 时：若响应 Content-Type 为 audio/* 等二进制类型，
         返回 (bytes, content_type_str) 而非解析后的 JSON dict。
         """
+        return self._forward_with_keys(
+            path_suffix,
+            (body.get("model") or "").strip(),
+            json.dumps(body).encode("utf-8"),
+            timeout=timeout or 120,
+            return_raw=return_raw,
+        )
+
+    def forward_raw(self, raw_body, content_type, path_suffix, timeout=None):
+        """透传 multipart 等原始请求，并按端点 Key 顺序自动切换。"""
+        return self._forward_with_keys(
+            path_suffix,
+            "",
+            raw_body,
+            content_type=content_type,
+            timeout=timeout or 120,
+        )
+
+    def _legacy_forward_request_disabled(self, path_suffix, body, timeout=None, return_raw=False):
+        """旧版实现保留在源码中，便于审阅历史行为；不再作为入口执行。"""
         self._cleanup_expired_cooldowns()
         requested_model = (body.get("model") or "").strip()
         if timeout is None:
@@ -1707,11 +1838,8 @@ class APIPool:
 
         raise AllEndpointsFailed(errors)
 
-    def forward_raw(self, raw_body, content_type, path_suffix, timeout=None):
-        """
-        透传原始字节请求（multipart/form-data 等非 JSON 请求），响应返回 JSON。
-        用于 audio/transcriptions 等接口。
-        """
+    def _legacy_forward_raw_disabled(self, raw_body, content_type, path_suffix, timeout=None):
+        """旧版原始请求实现，保留作历史参考；实际入口使用 _forward_with_keys。"""
         self._cleanup_expired_cooldowns()
         if timeout is None:
             timeout = 120
@@ -4079,7 +4207,7 @@ def api_handler(method, path, body):
         updates = body.get("updates")
         new_key = key
         if isinstance(updates, dict):
-            allowed = {"name", "base_url", "api_key", "timeout", "max_retries", "cooldown_minutes",
+            allowed = {"name", "base_url", "api_key", "api_keys", "timeout", "max_retries", "cooldown_minutes",
                        "priority", "daily_limit", "rpm_limit", "use_proxy", "protocol",
                        "health_mode", "billing_mode", "is_vision"}
             clean = {}
@@ -4144,6 +4272,10 @@ def api_handler(method, path, body):
                 if selection["in_pool"]:
                     ep.model = selection["public_model"]
                     ep.public_model = selection["public_model"]
+                if base.get("api_keys") or base.get("api_key"):
+                    ep.api_keys = list(base.get("api_keys") or [base.get("api_key")])
+                    ep.api_key = ep.api_keys[0] if ep.api_keys else ""
+                    pool._normalize_api_keys(ep)
                 pool._normalize_model_names(ep)
                 updated += 1
         pool._invalidate_cache()
@@ -4296,7 +4428,7 @@ def api_handler(method, path, body):
             if ep["id"] == ep_id: target_ep = ep; break
         if not target_ep: return 404, {"error": "端点不存在"}, False
         test_pool = APIPool(default_payload={"temperature": 0.7})
-        test_pool.add_endpoint({"name": target_ep["name"], "base_url": target_ep["base_url"], "api_key": target_ep["api_key_full"], "model": target_ep["model"], "public_model": target_ep.get("public_model", target_ep["model"]), "upstream_model": target_ep.get("upstream_model", target_ep["model"]), "priority": 1, "timeout": target_ep["timeout"], "max_retries": target_ep["max_retries"], "enabled": True, "in_pool": True, "use_proxy": target_ep.get("use_proxy", True), "protocol": target_ep.get("protocol", "openai"), "is_vision": target_ep.get("is_vision", True)})
+        test_pool.add_endpoint({"name": target_ep["name"], "base_url": target_ep["base_url"], "api_key": target_ep["api_key_full"], "api_keys": target_ep.get("api_keys_full") or [target_ep["api_key_full"]], "model": target_ep["model"], "public_model": target_ep.get("public_model", target_ep["model"]), "upstream_model": target_ep.get("upstream_model", target_ep["model"]), "priority": 1, "timeout": target_ep["timeout"], "max_retries": target_ep["max_retries"], "enabled": True, "in_pool": True, "use_proxy": target_ep.get("use_proxy", True), "protocol": target_ep.get("protocol", "openai"), "is_vision": target_ep.get("is_vision", True)})
         
         img = body.get("image")
         if img:
@@ -5165,7 +5297,7 @@ select option { background: var(--bg); color: var(--text); }
     <div style="font-size:11px;color:var(--text-dim);margin:-10px 0 14px;">修改将批量应用到该站的全部端点；留空的项保持各端点原值不变。显示「(多个值)」表示该站各端点当前配置不一致。</div>
     <div class="form-group"><label>站点名称</label><input type="text" id="seName" placeholder="留空不修改"></div>
     <div class="form-group"><label>Base URL</label><input type="text" id="seUrl" placeholder="留空不修改（修改后按新域名重新归组）"></div>
-    <div class="form-group"><label>上游 API Key</label><input type="password" id="seKeyInput" placeholder="留空不修改"><div style="font-size:11px;color:var(--text-dim);margin-top:4px;">当前：<code id="seKeyHint">—</code></div></div>
+    <div class="form-group"><label>上游 API Key</label><div style="display:flex;gap:6px;align-items:center"><input type="password" id="seKeyInput" placeholder="留空不修改" style="flex:1"><button class="btn btn-ghost btn-sm" id="seKeyViewBtn" onclick="toggleStationKeyVisibility()" title="显示明文 Key">👁</button></div><div style="font-size:11px;color:var(--text-dim);margin-top:4px;">当前：<code id="seKeyHint">—</code></div></div>
     <div class="form-row">
       <div class="form-group"><label>超时 (秒)</label><input type="number" id="seTimeout" min="1" placeholder="不修改"></div>
       <div class="form-group"><label>重试次数</label><input type="number" id="seRetries" min="0" placeholder="不修改"></div>
@@ -5647,6 +5779,9 @@ function openStationEdit(key){
   setV('seName',cfg.name);
   setV('seUrl',s.base_urls.length===1?s.base_urls[0]:null);
   document.getElementById('seKeyInput').value='';
+  document.getElementById('seKeyInput').type='password';
+  document.getElementById('seKeyViewBtn').textContent='👁';
+  document.getElementById('seKeyViewBtn').title='显示明文 Key';
   document.getElementById('seKeyHint').textContent=cfg.api_key_hint===null?multi:(cfg.api_key_hint||'—');
   setV('seTimeout',cfg.timeout);setV('seRetries',cfg.max_retries);
   setV('seCooldown',cfg.cooldown_minutes);setV('seRpm',cfg.rpm_limit);setV('seDaily',cfg.daily_limit);
@@ -5656,6 +5791,14 @@ function openStationEdit(key){
   document.getElementById('stationEditModal').classList.add('show');
 }
 function closeStationEdit(){document.getElementById('stationEditModal').classList.remove('show');}
+function toggleStationKeyVisibility(){
+  const input=document.getElementById('seKeyInput');
+  const button=document.getElementById('seKeyViewBtn');
+  if(!input)return;
+  const visible=input.type==='text';
+  input.type=visible?'password':'text';
+  if(button){button.textContent=visible?'👁':'🙈';button.title=visible?'显示明文 Key':'隐藏明文 Key';}
+}
 async function seFetchModels(){
   // 复用「添加端点」弹窗：进入该站的模型池编辑模式
   const eps=await api('GET','/api/endpoints');
@@ -5942,11 +6085,20 @@ function renderKeyList(){
     const u=!!(document.getElementById('fUrl')?.value?.trim());
     c.innerHTML=keyList.map((kv,i)=>`<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
       <input type="password" id="keyInput${i}" placeholder="sk-..." style="flex:1;min-width:0" oninput="keyList[${i}].key=this.value;checkFetchBtn()">
+      <button class="btn btn-ghost btn-sm" id="keyViewBtn${i}" onclick="toggleKeyVisibility(${i})" title="显示明文 Key">👁</button>
       <button class="btn btn-yellow btn-sm" id="keyFetchBtn${i}" onclick="fetchModelsForKeyIdx(${i})" title="拉取该 Key 的模型" ${u&&kv.key.trim()?'':'disabled'}>🔍</button>
       ${keyList.length>1?`<button class="btn btn-ghost btn-sm" onclick="removeKey(${i})" style="color:var(--red);padding:0 6px" title="移除">✕</button>`:''}
     </div>`).join('');
     keyList.forEach((kv,i)=>{const inp=document.getElementById('keyInput'+i);if(inp)inp.value=kv.key;});
     checkFetchBtn();
+}
+function toggleKeyVisibility(i){
+    const input=document.getElementById('keyInput'+i);
+    const button=document.getElementById('keyViewBtn'+i);
+    if(!input)return;
+    const visible=input.type==='text';
+    input.type=visible?'password':'text';
+    if(button){button.textContent=visible?'👁':'🙈';button.title=visible?'显示明文 Key':'隐藏明文 Key';}
 }
 function addKey(){keyList.push({key:''});renderKeyList();}
 function removeKey(i){keyList.splice(i,1);if(!keyList.length)keyList.push({key:''});renderKeyList();}
@@ -6001,6 +6153,7 @@ async function fetchAllKeys(){
   if(!u){toast('填写 Base URL','error');return;}
   const keys=keyList.filter(kv=>kv.key.trim());
   if(!keys.length){toast('填写至少一个 Key','error');return;}
+  const firstKey=keys[0].key.trim();
 
   allModels=[];modelKeyMap={};selectedModels=new Set();latencyResults={};visionResults={};capabilityResults={};modelPage=1;
   existingSelectionInitialized=false;
@@ -6013,7 +6166,7 @@ async function fetchAllKeys(){
       const ep=endpoints[0];
       const upstreamModel=ep.upstream_model||ep.model;
       allModels.push({id:upstreamModel});
-      modelKeyMap[upstreamModel]=modelKeyMap[upstreamModel]||firstKey;
+      modelKeyMap[upstreamModel]=modelKeyMap[upstreamModel]||keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
     });
     initializeExistingStationSelection();
   }
@@ -6200,7 +6353,7 @@ function editEndpoint(id){
         document.getElementById('editName').value=id;document.getElementById('modalTitle').textContent='编辑端点';
         document.getElementById('fName').value=ep.name;document.getElementById('fUrl').value=ep.base_url;document.getElementById('fModel').value=ep.model;document.getElementById('fUpstreamModel').value=ep.upstream_model||ep.model;
         document.getElementById('fPriority').value=ep.priority;document.getElementById('fTimeout').value=ep.timeout;document.getElementById('fRetries').value=ep.max_retries;document.getElementById('fCooldown').value=ep.cooldown_minutes;document.getElementById('fEnabled').value=String(ep.enabled);document.getElementById('fDailyLimit').value=ep.daily_limit||0;document.getElementById('fRpmLimit').value=ep.rpm_limit||0;document.getElementById('fProxy').value=String(ep.use_proxy!==false);document.getElementById('fProtocol').value=ep.protocol||'openai';document.getElementById('fHealthMode').value=ep.health_mode||'chat';document.getElementById('fVision').value=String(ep.is_vision!==false);
-        keyList=[{key:ep.api_key_full||''}];modelKeyMap={};renderKeyList();
+        keyList=(ep.api_keys_full||[ep.api_key_full||'']).filter(Boolean).map(key=>({key}));if(!keyList.length)keyList=[{key:''}];modelKeyMap={};renderKeyList();
         document.getElementById('modelBrowser').style.display='none';document.getElementById('batchBar').style.display='none';document.getElementById('batchAddBtn').style.display='none';document.getElementById('singleAddBtn').style.display='inline-flex';
         allModels=[];selectedModels=new Set();latencyResults={};visionResults={};capabilityResults={};modelAliases={};existingModels.clear();
         checkFetchBtn();document.getElementById('modal').classList.add('show');
@@ -6218,8 +6371,9 @@ async function saveStationModelSelection(){
     public_model:(modelAliases[m.id]||m.id).trim()||m.id,
     in_pool:selected.has(canonicalModelKey(m.id)),
   }));
+  const orderedKeys=keyList.map(kv=>kv.key.trim()).filter(Boolean);
   const base={
-    name:document.getElementById('fName').value.trim(),base_url:url,api_key:firstKey,
+    name:document.getElementById('fName').value.trim(),base_url:url,api_key:orderedKeys[0]||firstKey,api_keys:orderedKeys,
     start_priority:parseInt(document.getElementById('fPriority').value)||1,
     timeout:parseInt(document.getElementById('fTimeout').value)||60,
     max_retries:parseInt(document.getElementById('fRetries').value)||0,
@@ -6245,8 +6399,9 @@ async function saveEndpoint(){
     const upstreamModel=document.getElementById('fUpstreamModel').value.trim()||document.getElementById('fModel').value.trim();
     const aliasEdited=Object.prototype.hasOwnProperty.call(modelAliases,upstreamModel);
     const publicModel=(aliasEdited?modelAliases[upstreamModel].trim():document.getElementById('fModel').value.trim())||upstreamModel;
-    const firstKey=modelKeyMap[upstreamModel]||keyList.find(kv=>kv.key.trim())?.key?.trim()||'';
-    const d={name:document.getElementById('fName').value.trim(),base_url:document.getElementById('fUrl').value.trim(),api_key:firstKey,model:publicModel,public_model:publicModel,upstream_model:upstreamModel,priority:parseInt(document.getElementById('fPriority').value)||1,timeout:parseInt(document.getElementById('fTimeout').value)||60,max_retries:parseInt(document.getElementById('fRetries').value)||0,cooldown_minutes:parseInt(document.getElementById('fCooldown').value)||0,enabled:document.getElementById('fEnabled').value==='true',daily_limit:parseInt(document.getElementById('fDailyLimit').value)||0,rpm_limit:parseInt(document.getElementById('fRpmLimit').value)||0,use_proxy:document.getElementById('fProxy').value==='true',protocol:document.getElementById('fProtocol').value||'openai',health_mode:document.getElementById('fHealthMode').value||'chat',is_vision:document.getElementById('fVision').value==='true'};
+    const orderedKeys=keyList.map(kv=>kv.key.trim()).filter(Boolean);
+    const firstKey=orderedKeys[0]||'';
+    const d={name:document.getElementById('fName').value.trim(),base_url:document.getElementById('fUrl').value.trim(),api_key:firstKey,api_keys:orderedKeys,model:publicModel,public_model:publicModel,upstream_model:upstreamModel,priority:parseInt(document.getElementById('fPriority').value)||1,timeout:parseInt(document.getElementById('fTimeout').value)||60,max_retries:parseInt(document.getElementById('fRetries').value)||0,cooldown_minutes:parseInt(document.getElementById('fCooldown').value)||0,enabled:document.getElementById('fEnabled').value==='true',daily_limit:parseInt(document.getElementById('fDailyLimit').value)||0,rpm_limit:parseInt(document.getElementById('fRpmLimit').value)||0,use_proxy:document.getElementById('fProxy').value==='true',protocol:document.getElementById('fProtocol').value||'openai',health_mode:document.getElementById('fHealthMode').value||'chat',is_vision:document.getElementById('fVision').value==='true'};
     if(!d.name||!d.base_url||!d.api_key){toast('填写名称/URL/Key','error');return;}
     if(!d.model){toast('选择模型','error');return;}
     const r=await api(ep_id?'PUT':'POST',ep_id?`/api/endpoints/${encodeURIComponent(ep_id)}`:'/api/endpoints',d);
@@ -6266,8 +6421,8 @@ async function batchAddEndpoints(){
     toast(`添加 ${ms.length} 个...`,'info');
     const r=await api('POST','/api/endpoints/batch',{endpoints:ms.map((m,i)=>{
       const publicModel=modelAliases[m]||m;
-      return {name:fn?fn:publicModel,model:publicModel,public_model:publicModel,upstream_model:m,api_key:modelKeyMap[m]||firstKey,priority:sp+i,enabled:en,is_vision:visionResults[m]?.supports_vision??defaultVision};
-    }),base:{base_url:u,api_key:firstKey,timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm,enabled:en}});
+      return {name:fn?fn:publicModel,model:publicModel,public_model:publicModel,upstream_model:m,api_key:firstKey,api_keys:keyList.map(kv=>kv.key.trim()).filter(Boolean),priority:sp+i,enabled:en,is_vision:visionResults[m]?.supports_vision??defaultVision};
+    }),base:{base_url:u,api_key:firstKey,api_keys:keyList.map(kv=>kv.key.trim()).filter(Boolean),timeout:to,max_retries:re,cooldown_minutes:cd,daily_limit:dl,rpm_limit:rl,use_proxy:up,protocol:pt,start_priority:sp,health_mode:hm,enabled:en}});
     if(r.ok){
       const skipped=r.skipped?.length?`，跳过 ${r.skipped.length} 个重复模型`:'';
       toast(`已添加 ${r.added} 个${skipped}`,'success');closeModal();refresh();
