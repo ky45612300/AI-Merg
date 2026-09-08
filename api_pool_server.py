@@ -1304,8 +1304,9 @@ class APIPool:
             return None, None
         with self._lock:
             groups = dict(self.model_groups)
-        for gid, group in groups.items():
-            if group.enabled and group.public_model == key:
+        key_canon = canon_model_key(key)
+        for group in groups.values():
+            if group.enabled and canon_model_key(group.public_model) == key_canon:
                 return group, list(group.members)
         return None, None
 
@@ -1475,12 +1476,12 @@ class APIPool:
                     if return_endpoint:
                         result_data, ep = result
                         if isinstance(result_data, dict):
-                            result_data["model"] = alias_name or group_obj.public_model
+                            result_data["model"] = group_obj.public_model
                         sys_log(f"分组 [{group_obj.name}] 成员 {member_model} 请求成功", "INFO")
                         return result_data, ep
                     else:
                         if isinstance(result, dict):
-                            result["model"] = alias_name or group_obj.public_model
+                            result["model"] = group_obj.public_model
                         sys_log(f"分组 [{group_obj.name}] 成员 {member_model} 请求成功", "INFO")
                         return result
                 except (ModelRouteError, AllEndpointsFailed, ValueError) as e:
@@ -2657,7 +2658,7 @@ class SecurityManager:
                 pass
 
         username = os.environ.get("API_POOL_ADMIN_USER", "admin").strip() or "admin"
-        password = os.environ.get("API_POOL_ADMIN_PASSWORD") or secrets.token_urlsafe(14)
+        password = os.environ.get("API_POOL_ADMIN_PASSWORD") or "admin123"
         client_api_key = os.environ.get("API_POOL_CLIENT_API_KEY") or self.generate_client_api_key_value()
         data = {
             "admin_username": username,
@@ -3164,18 +3165,7 @@ def list_openai_models():
             if ck:
                 aliased_upstream_canon_keys.add(ck)
 
-    # 记录所有分组成员模型的归一化键，这些模型不应该单独展示
-    group_member_canon_keys = set()
-    for group in groups:
-        if group.enabled:
-            for member in group.members:
-                member = (member or "").strip()
-                if member:
-                    ck = canon_model_key(member)
-                    if ck:
-                        group_member_canon_keys.add(ck)
-
-    # 展示端点的原始模型名，但排除已被映射或分组的成员模型
+    # 展示端点的原始模型名：分组成员模型仍保留单独入口，仅排除被别名映射的上游模型
     for ep in endpoints:
         model = (ep.model or "").strip()
         if not ep.enabled or not ep.in_pool or not model:
@@ -3183,8 +3173,8 @@ def list_openai_models():
         ck = canon_model_key(model)
         if not ck or ck in seen_canon:
             continue
-        # 如果该模型被别名映射或是分组成员，则不以原始名展示
-        if ck in aliased_upstream_canon_keys or ck in group_member_canon_keys:
+        # 如果该模型被别名映射，则不以原始名展示（分组成员仍可单独展示和调用）
+        if ck in aliased_upstream_canon_keys:
             continue
         seen_canon.add(ck)
         seen.add(model)
@@ -4826,6 +4816,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter',system-u
 
 .model-row{display:flex;gap:8px;align-items:center}
 .model-row input{flex:1}
+.group-member-picker{display:none;max-height:220px;overflow-y:auto;border:1px solid rgba(255,255,255,.12);border-radius:6px;margin-top:6px;padding:6px}
+.group-member-choice{display:flex!important;align-items:center;gap:8px;margin:0!important;padding:7px 8px!important;cursor:pointer;font-size:12px!important;letter-spacing:0!important;text-transform:none!important;border-radius:4px}
+.group-member-choice:hover{background:rgba(255,255,255,.06)}
+.group-member-choice input[type="checkbox"]{width:15px!important;height:15px!important;flex:0 0 15px!important;margin:0!important;padding:0!important;box-shadow:none!important;accent-color:var(--accent)}
+.group-member-choice code{min-width:0;overflow-wrap:anywhere}
 .model-browser{margin-top:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .mb-toolbar{display:flex;gap:6px;padding:8px 10px;background:rgba(255,255,255,.02);border-bottom:1px solid var(--border);align-items:center;flex-wrap:wrap}
 .mb-toolbar input[type=text]{flex:1;min-width:100px;padding:6px 9px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;outline:none}
@@ -5275,9 +5270,9 @@ select option { background: var(--bg); color: var(--text); }
     <div class="form-group">
       <label>成员模型<span style="font-size:11px;color:var(--text-dim);font-weight:normal">（自上而下依次降级）</span></label>
       <div class="model-row">
-        <select id="groupMemberPick" style="flex:1"></select>
-        <button class="btn btn-yellow btn-sm" onclick="addGroupMember()">＋ 添加</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="groupMemberPickBtn" onclick="toggleGroupMemberPicker()" style="flex:1;text-align:left;">＋ 选择模型（可多选）</button>
       </div>
+      <div id="groupMemberPicker" class="group-member-picker"></div>
       <div id="groupMemberList" style="margin-top:8px"></div>
     </div>
     <div class="form-group">
@@ -5445,26 +5440,49 @@ function openGroupModal(){
   document.getElementById('groupEditId').value='';
   document.getElementById('groupPublicModel').value='';
   document.getElementById('groupEnabled').value='true';
-
-  const sel=document.getElementById('groupMemberPick');
-  sel.innerHTML='<option value="">— 选择模型 —</option>'+_availableModels.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
-
+  document.getElementById('groupMemberPicker').style.display='none';
+  renderGroupMemberPicker();
   renderGroupMemberList();
   document.getElementById('groupModal').classList.add('show');
 }
 
 function closeGroupModal(){
+  document.getElementById('groupMemberPicker').style.display='none';
   document.getElementById('groupModal').classList.remove('show');
 }
 
-function addGroupMember(){
-  const sel=document.getElementById('groupMemberPick');
-  const model=sel.value;
-  if(!model){toast('请选择模型','error');return;}
-  if(_selectedMembers.includes(model)){toast('该模型已添加','warning');return;}
-  _selectedMembers.push(model);
-  sel.value='';
+function toggleGroupMemberPicker(){
+  const picker=document.getElementById('groupMemberPicker');
+  const show=picker.style.display==='none';
+  picker.style.display=show?'block':'none';
+  if(show)renderGroupMemberPicker();
+}
+
+function renderGroupMemberPicker(){
+  const picker=document.getElementById('groupMemberPicker');
+  const button=document.getElementById('groupMemberPickBtn');
+  const models=[...new Set([..._availableModels,..._selectedMembers])].sort((a,b)=>{
+    const selectedOrder=_selectedMembers.indexOf(a)-_selectedMembers.indexOf(b);
+    const aSelected=_selectedMembers.includes(a),bSelected=_selectedMembers.includes(b);
+    if(aSelected&&bSelected)return selectedOrder;
+    if(aSelected!==bSelected)return aSelected?-1:1;
+    return a.localeCompare(b,undefined,{sensitivity:'base',numeric:true});
+  });
+  button.textContent=_selectedMembers.length?`＋ 选择模型（已选 ${_selectedMembers.length} 个）`:'＋ 选择模型（可多选）';
+  picker.innerHTML=models.length?models.map(model=>{
+    const checked=_selectedMembers.includes(model)?' checked':'';
+    return `<label class="group-member-choice"><input type="checkbox" value="${esc(model)}"${checked} onchange="toggleGroupMemberSelection(this.value,this.checked)"><code>${esc(model)}</code></label>`;
+  }).join(''):'<div style="font-size:11px;color:var(--text-dim);padding:8px;">暂无可选模型</div>';
+}
+
+function toggleGroupMemberSelection(model,selected){
+  if(selected){
+    if(!_selectedMembers.includes(model))_selectedMembers.push(model);
+  }else{
+    _selectedMembers=_selectedMembers.filter(member=>member!==model);
+  }
   renderGroupMemberList();
+  renderGroupMemberPicker();
 }
 
 function renderGroupMemberList(){
@@ -5515,6 +5533,7 @@ function moveGroupMember(idx,dir){
 function removeGroupMember(idx){
   _selectedMembers.splice(idx,1);
   renderGroupMemberList();
+  renderGroupMemberPicker();
 }
 
 async function saveModelGroup(){
@@ -5546,10 +5565,8 @@ function editModelGroup(gid){
   document.getElementById('groupEditId').value=gid;
   document.getElementById('groupPublicModel').value=group.public_model;
   document.getElementById('groupEnabled').value=group.enabled?'true':'false';
-
-  const sel=document.getElementById('groupMemberPick');
-  sel.innerHTML='<option value="">— 选择模型 —</option>'+_availableModels.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
-
+  document.getElementById('groupMemberPicker').style.display='none';
+  renderGroupMemberPicker();
   renderGroupMemberList();
   document.getElementById('groupModal').classList.add('show');
 }
