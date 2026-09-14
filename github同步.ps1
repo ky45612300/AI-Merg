@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
-# ---- 主要同步文件（白名单）----
+# ---- 主要同步文件（白名单，只保留核心）----
 $MainFiles = @(
     "api_pool_server.py",
     "api_config.example.json",
@@ -15,29 +15,26 @@ $MainFiles = @(
     ".gitignore",
     ".gitattributes",
     "github同步.ps1",
-    "优化方案.md",
-    "模型分组功能说明.md",
-    "启动健康检测.py",
-    "数据库维护工具.py",
-    "配置去重分析.py",
     "start_service.ps1",
     "stop_service.ps1",
     "restart_service.ps1",
     "status_service.ps1",
     "start_api_pool.bat",
     "stop_api_pool.bat",
-    "restart_api_pool.bat",
-    "start_api_pool.vbs"
+    "restart_api_pool.bat"
 )
-$MainDirs = @("tests", "assets")
+$MainDirs = @("tests")
 
 # ---- 不应出现在仓库里的文件/目录（从 git 移除但保留本地）----
 $Untrack = @(
-    ".backups", ".claude", "work", "logs",
+    ".backups", ".claude", "work", "logs", "assets",
     "api-pool.pid", "api_config.json.bak", "api_pool.db",
     "chat_logs.db-shm", "chat_logs.db-wal",
     "token_stats.db-shm", "token_stats.db-wal",
-    "claude启动.bat", "一键重启.bat", "继续Claude会话.bat"
+    "claude启动.bat", "一键重启.bat", "继续Claude会话.bat",
+    "start_api_pool.vbs",
+    "优化方案.md", "模型分组功能说明.md",
+    "启动健康检测.py", "数据库维护工具.py", "配置去重分析.py"
 )
 
 Write-Host "==> [1/3] 清理误跟踪文件..." -ForegroundColor Cyan
