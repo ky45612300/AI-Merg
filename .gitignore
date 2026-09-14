@@ -9,22 +9,28 @@ Thumbs.db
 # 实际配置文件（含 API Key），不提交
 api_config.json
 security_config.json
+api_config.json.bak
+.backups/
 
-# 数据库文件
-token_stats.db
-token_stats.db-journal
-token_stats.db-shm
-token_stats.db-wal
-chat_logs.db
-chat_logs.db-journal
-chat_logs.db-shm
-chat_logs.db-wal
+# 数据库文件（含端点密钥或运行时数据）
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
 
 # 运行时文件
 *.pid
 *.log
 logs/
 nul
+
+# 本地开发/会话脚本（含本地路径或密钥）
+claude启动.bat
+继续Claude会话.bat
+一键重启.bat
+
+# 本地工作目录
+work/
 
 # 临时脚本
 test_suite.py

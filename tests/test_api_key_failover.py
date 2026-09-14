@@ -1,9 +1,12 @@
 import importlib.util
+import io
+import json
 import os
 import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -103,7 +106,55 @@ class ApiKeyFailoverTests(unittest.TestCase):
         pool, ep = self.make_pool(["key-one-1234", "key-two-5678"])
         data = pool._ep_to_dict(ep, False, time.time())
         self.assertEqual(data["api_keys_full"], ["key-one-1234", "key-two-5678"])
-        self.assertEqual(data["api_keys"], ["key-one-1***", "key-two-5***"])
+        self.assertEqual(data["api_keys"], ["key-one-***", "key-two-***"])
+
+    def test_all_auth_failures_do_not_cool_the_whole_endpoint(self):
+        pool, ep = self.make_pool(["key-one-1234", "key-two-5678"])
+        pool._try_endpoint = lambda *args, **kwargs: (None, "HTTP 401: invalid key")
+        result, error, used_key = pool._try_endpoint_with_keys(ep, {"model": "demo-model"}, timeout=1)
+        self.assertIsNone(result)
+        self.assertFalse(used_key)
+        self.assertEqual(ep._cooldown_until, 0)
+        self.assertIn("上游 HTTP 401", error)
+        self.assertNotIn("key-one", error)
+
+    def test_upstream_errors_are_sanitized_before_returning_to_client(self):
+        self.assertEqual(
+            self.module.APIPool._sanitize_upstream_error(
+                "HTTP 401: Authorization Bearer secret-key-123"
+            ),
+            "上游 HTTP 401",
+        )
+
+    def test_non_chat_forward_uses_next_key_after_auth_failure(self):
+        pool, ep = self.make_pool(["key-one-1234", "key-two-5678"])
+        ep._health = "ok"
+        calls = []
+
+        class FakeResponse:
+            headers = {"Content-Type": "application/json"}
+
+            def read(self):
+                return b'{"ok":true}'
+
+            def close(self):
+                pass
+
+        def fake_open(request, timeout=None, context=None):
+            calls.append(request.headers.get("Authorization"))
+            if calls[-1] == "Bearer key-one-1234":
+                raise self.module.urllib.error.HTTPError(
+                    request.full_url, 401, "Unauthorized", {}, io.BytesIO(b"bad key")
+                )
+            return FakeResponse()
+
+        with patch.object(self.module.urllib.request, "urlopen", side_effect=fake_open):
+            result = pool.forward_request("embeddings", {"model": "demo-model", "input": "x"}, timeout=1)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls, ["Bearer key-one-1234", "Bearer key-two-5678"])
+        self.assertGreater(ep._key_cooldown_until["key-one-1234"], time.time())
+        self.assertEqual(ep._cooldown_until, 0)
 
 
 if __name__ == "__main__":

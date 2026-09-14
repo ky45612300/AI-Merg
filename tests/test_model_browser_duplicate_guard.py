@@ -287,5 +287,66 @@ class ModelBrowserDuplicateGuardSourceTests(unittest.TestCase):
         self.assertIn("stationEditModelMode||!isExistingModel(m.id)", html)
 
 
+class ModelGroupPublicApiTests(unittest.TestCase):
+    def setUp(self):
+        self.pool = SERVER.APIPool()
+        self.pool._check_new_endpoint_health = lambda _ep_id: None
+        self.pool.add_endpoint({
+            "id": "group-member-1",
+            "name": "Group member",
+            "base_url": "https://example.invalid/v1",
+            "api_key": "test-key",
+            "model": "glm-5.2",
+            "upstream_model": "glm-5.2",
+            "health_mode": "none",
+            "in_pool": True,
+            "enabled": True,
+        })
+        self.pool.model_groups = {
+            "group-1": SERVER.ModelGroup(
+                id="group-1",
+                name="GLM group",
+                public_model="glm-auto",
+                members=["glm-5.2"],
+            )
+        }
+
+    def test_group_public_name_is_listed_and_resolves_like_other_model_names(self):
+        original_pool = SERVER.pool
+        SERVER.pool = self.pool
+        try:
+            status, body, _ = SERVER.api_handler("GET", "/v1/models", {})
+        finally:
+            SERVER.pool = original_pool
+
+        self.assertEqual(status, 200)
+        self.assertIn("glm-auto", [model["id"] for model in body["data"]])
+        group, members = self.pool.resolve_model_group("GLM_AUTO")
+        self.assertEqual(group.public_model, "glm-auto")
+        self.assertEqual(members, ["glm-5.2"])
+
+    def test_group_public_name_routes_to_its_member(self):
+        original_pool = SERVER.pool
+        calls = []
+
+        def fake_try_endpoint(endpoint, payload, timeout, **kwargs):
+            calls.append(payload["model"])
+            return {"choices": [{"message": {"content": "ok"}}]}, ""
+
+        self.pool._try_endpoint = fake_try_endpoint
+        SERVER.pool = self.pool
+        try:
+            status, body, _ = SERVER.api_handler("POST", "/v1/chat/completions", {
+                "model": "GLM_AUTO",
+                "messages": [{"role": "user", "content": "hello"}],
+            })
+        finally:
+            SERVER.pool = original_pool
+
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, ["glm-5.2"])
+        self.assertEqual(body["model"], "glm-auto")
+
+
 if __name__ == "__main__":
     unittest.main()
