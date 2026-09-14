@@ -32,5 +32,14 @@ claude启动.bat
 # 本地工作目录
 work/
 
+# 不在同步白名单内的本地文件（不入库）
+assets/
+start_api_pool.vbs
+优化方案.md
+模型分组功能说明.md
+启动健康检测.py
+数据库维护工具.py
+配置去重分析.py
+
 # 临时脚本
 test_suite.py
